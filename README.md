@@ -106,6 +106,10 @@ There is much room for improvement in this project.
 
   - There should be some settings to tweak to affect the conversion.
 
+  - The output files are much bigger than they really need to be. (Lots of redundancy in
+    the insructions sent to the OPL3, e.g. the same frequency being sent repeatedly, even
+    if it hasn't changed.)
+
   - The quality of the output could be HUGELY BETTER: The resynthesis method currently 
     only contains pure sine waves (1-operator, basically), rather than any of the advanced
     features offered in OPL3 juch as 2-op, 4-op, percussion modes, vibrato, tremolo, 
