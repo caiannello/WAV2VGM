@@ -29,6 +29,11 @@ Directory Content:
   WAV2VGM.py -          Main executable
 
 ```
+## Sample Output
+
+The sound files from the input/ directory have been converted and are provided in the output/
+directory as VGM files and MP3 files. These can be played using WINAMP, VGMPLAY, etc.
+
 ## Gallery
 
 Spectrogram view of a song: "Ghouls and Ghosts - The Village of Decay" 
@@ -36,12 +41,6 @@ Spectrogram view of a song: "Ghouls and Ghosts - The Village of Decay"
 
 Peak Detection view of a speech sample
 ![gg](https://raw.githubusercontent.com/caiannello/WAV2VGM/main/doc/peak_detect_jfk.png)
-
-## Sample Output
-
-The sound files from the input/ directory have been converted and are provided in the output/
-directory as VGM files and MP3 files. These can be played using WINAMP, VGMPLAY, etc.
-
 
 ## Installation
 
