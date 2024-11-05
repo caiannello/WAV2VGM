@@ -22,15 +22,14 @@ import struct
 import gzip
 import sys
 # -----------------------------------------------------------------------------
+# TODO:  Make a bunch of this stuff user-configurable!
+
 screen_width=1920 
 screen_height=1080
 origspect=None
-# when making synth parameters to match a waveform...
 SLICE_FREQ = 91.552734375   # frequency at which the synth parameters are altered
 MAX_SYNTH_CHANS = 18   # polyphony of synth (num independent oscillators)
-
 OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to an operator
-
 SPECT_VERT_SCALE = 3  # set vert axis to 7350 Hz max rather than 22050 Hz                      
 # -----------------------------------------------------------------------------
 pygame.init()
@@ -551,7 +550,7 @@ def opl3init():
       r = 0xc0 + chan
       v = 0x31
       res+=struct.pack('BBB',0x5f,r,v)
-      # waveform select sine
+      # waveform select sine (todo: use different waveforms when appropriate!)
       r = 0xe0 + a
       v = 0x00
       res+=struct.pack('BBB',0x5f,r,v)
@@ -560,8 +559,21 @@ def opl3init():
       res+=struct.pack('BBB',0x5f,r,v)
   return res
 # -----------------------------------------------------------------------------
-# returns the OPL3 register sequence to affect the specified freq in hz, 
-# amplitude, and key on/off for the specified channel.
+# Returns an OPL3 register set sequence to set a specified channel to 
+# the specified frequency, volume, and/or key on/off.
+#
+# TODO: we really shouldn't need to set everything on every channel/frame!
+# We should instead pigenhole peaks to specific channels and keep them there
+# for as many frames as needed. That way, we only need to set things that have
+# changed since the previous frame. This should reduce the output file size
+# and may even sound better!
+# 
+# Also TODO: OPL3 can do way more than just play sine waves. It would be 
+# nice if the analysis could identify use cases for  2-op and 4-op 
+# instruments, percussion, noise, vibratoo, tremolo, and whatever else we can
+# take advantage of! (Not easy. Might need an AI, eventually, or at least 
+# some better pattern-matching than the simple spectral peak-detect we're 
+# currently doing.)
 # -----------------------------------------------------------------------------
 def opl3params(freq,namp,chan, keyon):
   fnum, block = getFnumBlock(freq)
@@ -586,7 +598,7 @@ def opl3params(freq,namp,chan, keyon):
       aval = 0
 
     if chan<9:
-      r = 0x40 + opidxs[0]
+      r = 0x40 + opidxs[0]  # set volume
       v = aval
       res+=struct.pack('BBB',0x5e,r,v)
 
@@ -594,10 +606,11 @@ def opl3params(freq,namp,chan, keyon):
       v = aval
       res+=struct.pack('BBB',0x5e,r,v)
 
-      r = 0xA0 + chan
+      r = 0xA0 + chan  # set low bits of frequency
       v = fnum&0xff
       res+=struct.pack('BBB',0x5e,r,v)
-      r = 0xb0 + chan
+
+      r = 0xb0 + chan  # set key-on and high bits of frequency
       v = 0b00100000 | ((fnum>>8)&3) | (block<<2)
       res+=struct.pack('BBB',0x5e,r,v)
     else:
@@ -605,17 +618,18 @@ def opl3params(freq,namp,chan, keyon):
       a = opidxs[0] - 18
       b = opidxs[1] - 18
 
-      r = 0x40 + a
+      r = 0x40 + a # volume
       v = aval
       res+=struct.pack('BBB',0x5f,r,v)
       r = 0x40 + b
       v = aval
       res+=struct.pack('BBB',0x5f,r,v)
 
-      r = 0xA0 + chan
+      r = 0xA0 + chan # low bits of freq
       v = fnum&0xff
       res+=struct.pack('BBB',0x5f,r,v)
-      r = 0xb0 + chan - 9
+
+      r = 0xb0 + chan - 9    # key-on and high bits of freq
       v = 0b00100000 | ((fnum>>8)&3) | (block<<2)
       res+=struct.pack('BBB',0x5f,r,v)
 
@@ -719,6 +733,8 @@ def fastAnalyze():
 
   # make and write the VGZ output file
   print('Making output file (VGZ)...')
+  # these bytes are the VGM header which specifies that we want OPL3 at 14.318 MHz!
+  # TODO: Any of the dozen other synth types supported by the VGM file format!
   outvgm = b'Vgm \xd3\xcb\x00\x00Q\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xcd\xca\x00\x00\x8a\x12}\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x8c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00dz\xda\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
   outvgm+=opl3init()
 
@@ -751,6 +767,8 @@ def fastAnalyze():
   print(f'{min_height=} {max_height=}')
 
   playrows(rows)
+# -----------------------------------------------------------------------------
+# experimental stuff regarding additive synthesis with sinewaves
 # -----------------------------------------------------------------------------
 def calibrate():
   global origspect
