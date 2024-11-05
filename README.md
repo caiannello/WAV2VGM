@@ -18,7 +18,9 @@ The sound quality leaves huge room for improvement: The OPL3 synth can do
 way better than produce a bunch of pure sine waves. Leveraging these features
 automatically is not a trivial programming problem, but it can be done, and
 it has the potential to provide amazing renditions of all kinds of sounds
-and music. 
+and music.
+
+ALSO TODO: OPL2 output would be fairly easy to add, albeit with less channels.
 
 Directory Content:
   
