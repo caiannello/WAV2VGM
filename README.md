@@ -32,7 +32,7 @@ Directory Content:
 ## Sample Output
 
 The sound files from the input/ directory have been converted and are provided in the output/
-directory as VGM files and MP3 files. These can be played using WINAMP, VGMPLAY, etc.:
+directory as VGM files and MP3 files. These can be played using WINAMP, VGMPLAY, a REAL OPL3 CHIP, etc.:
 
 [JFK Inaguration Clip](https://github.com/caiannello/WAV2VGM/raw/refs/heads/main/output/JFK%20Inaguration.mp3)
 
