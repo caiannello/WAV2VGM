@@ -48,7 +48,7 @@ directory as VGM files and MP3 files. These can be played using WINAMP, VGMPLAY,
 This utility requires Python 3.6+ to be installed, as well as the package manager, python3-pip.
 
 There are additional dependencies, listed in requirements.txt, which can be be installed 
-from the command-line in Windows, Linux, or Mac by doing somethig similar to the following:
+from the command-line in Windows, Linux, or Mac by doing something similar to the following:
 
 Windows:
 ```
