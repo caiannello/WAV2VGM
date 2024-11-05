@@ -14,14 +14,6 @@ detect peak frequencies on the spectrogram and make a set of OPL3
 instructions to play these peaks as a sum of pure sine waves of varying
 amplitudes.
 
-The sound quality leaves huge room for improvement: The OPL3 synth can do
-way better than produce a bunch of pure sine waves. Leveraging these features
-automatically is not a trivial programming problem, but it can be done, and
-it has the potential to provide amazing renditions of all kinds of sounds
-and music.
-
-ALSO TODO: OPL2 output would be fairly easy to add, albeit with less channels.
-
 Directory Content:
   
   doc -                 Currently just some screenshots
@@ -117,6 +109,10 @@ There is much room for improvement in this project.
   - The quality of the output could be HUGELY BETTER: The resynthesis method currently 
     only contains pure sine waves (1-operator, basically), rather than any of the advanced
     features offered in OPL3 juch as 2-op, 4-op, percussion modes, vibrato, tremolo, 
-    or volume envelopes. 
+    or volume envelopes.
+
+  - It would be super easy to add OPL2 support, since nearly the same but with less
+    channels. Many of the synthesizers supported by the VGM file format would be
+    a good fit with this project and should be added.
 
 
