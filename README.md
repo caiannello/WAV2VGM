@@ -91,7 +91,7 @@ following (lowercase) keys:
       during playback.)
   a - Analyze the spectrum and show frequency peaks.
 
-  Or close the window to Quit.
+  Or close the window to quit.
 ```
   Clicking on the displayed spectrogram sets some cursors, but these don't yet 
   do anything useful.
@@ -103,7 +103,7 @@ There is much room for improvement in this project.
   - The code is quite disorganized and slow, and the user interface is sparse and unintuitive. 
 
   - The input file format requirements are too strict. Utility should be able to load
-    Stereo files, files with different sample rates, and formats besides WAV.
+    files of different types, with different sample rates and channel counts.
 
   - There should be some settings to tweak to affect the conversion.
 
