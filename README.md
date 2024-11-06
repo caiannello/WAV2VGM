@@ -14,12 +14,6 @@ detect peak frequencies on the spectrogram and make a set of OPL3
 instructions to play these peaks as a sum of pure sine waves of varying
 amplitudes.
 
-The sound quality leaves huge room for improvement: The OPL3 synth can do
-way better than produce a bunch of pure sine waves. Leveraging these features
-automatically is not a trivial programming problem, but it can be done, and
-it has the potential to provide amazing renditions of all kinds of sounds
-and music. 
-
 Directory Content:
   
   doc -                 Currently just some screenshots
@@ -89,6 +83,7 @@ If all is well, after some time, a window should appear which displays a spectro
 the input sound. From here, a few different commands can be issued by pressing the 
 following (lowercase) keys:
 
+```
   p - Play original sound (currently, program is unresponsive during playback)
   f - Analyze the sound and outputs a VGM file to the output/ directory.
       The file can be played using WINAMP, VGMPLAY, or even a real YMF262M (OPL3) chip!
@@ -97,7 +92,7 @@ following (lowercase) keys:
   a - Analyze the spectrum and show frequency peaks.
 
   Or close the window to Quit.
-
+```
   Clicking on the displayed spectrogram sets some cursors, but these don't yet 
   do anything useful.
 
@@ -112,10 +107,18 @@ There is much room for improvement in this project.
 
   - There should be some settings to tweak to affect the conversion.
 
+  - The output files are much bigger than they really need to be. (Lots of redundancy in
+    the insructions sent to the OPL3, e.g. the same frequency being sent repeatedly, even
+    if it hasn't changed.)
+
   - The quality of the output could be HUGELY BETTER: The resynthesis method currently 
     only contains pure sine waves (1-operator, basically), rather than any of the advanced
     features offered in OPL3 juch as 2-op, 4-op, percussion modes, vibrato, tremolo, 
-    or volume envelopes. 
+    or volume envelopes.
+
+  - It would be super easy to add OPL2 support, since nearly the same but with less
+    channels. Many of the synthesizers supported by the VGM file format would be
+    a good fit with this project and should be added.
 
   - I want to someday make a super slow version that iteratively brute-forces different 
     opl register combos, 2-op, 4-op, etc, to try to better approximate the input at
