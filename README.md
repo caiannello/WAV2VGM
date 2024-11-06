@@ -57,12 +57,12 @@ from the command-line in Windows, Linux, or Mac by doing something similar to th
 
 Windows:
 ```
-pip install numpy pygame scipy
+pip install numpy pygame scipy PyOPL
 ```
 
 Linux, Mac:
 ```
-sudo pip install numpy pygame scipy
+sudo pip install numpy pygame scipy PyOPL
 ```
 
 ## Usage
@@ -117,4 +117,8 @@ There is much room for improvement in this project.
     features offered in OPL3 juch as 2-op, 4-op, percussion modes, vibrato, tremolo, 
     or volume envelopes. 
 
+  - I want to someday make a super slow version that iteratively brute-forces different 
+    opl register combos, 2-op, 4-op, etc, to try to better approximate the input at
+    each frame. (Something I can brood over for hours.. like genetic annealing, or 
+    training a GAN or something... MUHAHA!)
 

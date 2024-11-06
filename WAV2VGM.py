@@ -18,9 +18,12 @@ import math
 from scipy import signal
 import numpy as np
 from src import spect as sp
+from src import myopl as opl
 import struct
 import gzip
 import sys
+import pyopl
+
 # -----------------------------------------------------------------------------
 # TODO:  Make a bunch of this stuff user-configurable!
 
@@ -46,6 +49,7 @@ else:
   #wavname = 'HAL 9000 - Human Error.wav'
   #wavname = 'JFK Inaguration.wav'
   wavname = 'Ghouls and Ghosts - The Village Of Decay.wav'
+  #wavname = 'Amiga-Leander-Intro.wav'
 
 tempfolder = 'temp\\'
 outfolder = 'output\\'
@@ -405,39 +409,6 @@ def playWave():
   while pygame.mixer.get_busy(): 
     pygame.time.Clock().tick(10)         
 # -----------------------------------------------------------------------------
-# Given a series of spectral peaks, resynthesize the sound by summing 
-# sine waves of various appropriate freqs and amplitudes
-# -----------------------------------------------------------------------------  
-def playrows(rows):
-  print('Synthesizing sound...')
-  swave = []
-  wav = []
-  phases = [0]*MAX_SYNTH_CHANS
-  for row in rows:
-    freqs = []
-    amps = []    
-    for freq, amp, pheight in row:
-      freqs.append(freq)
-      amps.append(amp)
-    for j in range(0,int(44100/SLICE_FREQ)):
-      ssum = 0
-      for ch in range(0,MAX_SYNTH_CHANS):
-        ssum += amps[ch]*math.sin(phases[ch])
-        phases[ch] += freqs[ch]*2.0*3.14159 / 44100.0
-      isum = int(ssum/MAX_SYNTH_CHANS)
-      wav.append(isum)
-      swave.append([isum,isum])
-  print('Drawing spectrum of synthesized sound...')  
-  wav = np.array(wav)
-  origspect = sp.spect(samples=wav)    
-  sh2=screen_height
-  drawSpect(origspect,0,0,screen_width,sh2)
-  print('Playing sound...')  
-  s=pygame.sndarray.make_sound(np.array(swave, dtype="int16"))
-  pygame.mixer.Sound.play(s)
-  while pygame.mixer.get_busy(): 
-    pygame.time.Clock().tick(10)   
-# -----------------------------------------------------------------------------
 # Start of OPL3 stuff
 # -----------------------------------------------------------------------------
 max_freq_per_block = [48.503,97.006,194.013,388.026,776.053,1552.107,3104.215,6208.431]
@@ -459,15 +430,25 @@ def getFnumBlock(freq):
 # -----------------------------------------------------------------------------
 # Sequence to init the OPL3 chip to allow 18 channels of plain sine waves.
 # -----------------------------------------------------------------------------
+prev_sets = {}
+oplemu = None
+
 def opl3init():
+  global prev_sets, oplemu
+  prev_sets = {}
+
+  oplemu = opl.myopl()
   res = b''
   # enable opl3 mode
   r = 0x05
   v = 0x01
+  oplemu.write(1,r,v);
+
   res+=struct.pack('BBB',0x5f,r,v)
   # enable waveform select
   r = 0x01
   v = 0x20
+  oplemu.write(1,r,v);
   res+=struct.pack('BBB',0x5f,r,v)
 
   for chan in range(0,18):
@@ -476,43 +457,54 @@ def opl3init():
       # sustain, vibrato,opfreqmult
       r = 0x20 + opidxs[0]
       v = 0x21
+      oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       r = 0x20 + opidxs[1]
       v = 0x21
+      oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # keyscalelevel, output level
       # setting keyscale level to 6.0 dB of attenuation per rise in octave
       # (we really want more than this and need to implement something ourselves)
       r = 0x40 + opidxs[0]
       v = 0x30  # 30
+      oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       r = 0x40 + opidxs[1]
       v = 0x30
+      oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # attack rate, decay rate
       r = 0x60 + opidxs[0]
       v = 0xff
+      oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       r = 0x60 + opidxs[1]
       v = 0xff
+      oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # sust level, release rate
       r = 0x80 + opidxs[0]
       v = 0x0f
+      oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       r = 0x80 + opidxs[1]
       v = 0x0f
+      oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # output channels L&R and additive synth
       r = 0xc0 + chan
       v = 0x31
+      oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # waveform select sine
       r = 0xe0 + opidxs[0]
       v = 0x00
+      oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       r = 0xe0 + opidxs[1]
       v = 0x00
+      oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
     else:
       chan-=9
@@ -521,41 +513,52 @@ def opl3init():
       # sustain, vibrato,opfreqmult
       r = 0x20 + a
       v = 0x21
+      oplemu.write(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       r = 0x20 + b
       v = 0x21
+      oplemu.write(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       # keyscalelevel, output level
       r = 0x40 + a
       v = 0x30
+      oplemu.write(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       r = 0x40 + b
       v = 0x30    #  30
+      oplemu.write(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       # attack rate, decay rate
       r = 0x60 + a
       v = 0xff
+      oplemu.write(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       r = 0x60 + b
       v = 0xff
+      oplemu.write(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       # sust level, release rate
       r = 0x80 + a
       v = 0x0f
+      oplemu.write(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       r = 0x80 + b
       v = 0x0f
+      oplemu.write(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       # output channels L&R and additive synth
       r = 0xc0 + chan
       v = 0x31
+      oplemu.write(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       # waveform select sine (todo: use different waveforms when appropriate!)
       r = 0xe0 + a
       v = 0x00
+      oplemu.write(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       r = 0xe0 + b
       v = 0x00
+      oplemu.write(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
   return res
 # -----------------------------------------------------------------------------
@@ -576,62 +579,79 @@ def opl3init():
 # currently doing.)
 # -----------------------------------------------------------------------------
 def opl3params(freq,namp,chan, keyon):
+  global prev_sets, oplemu
   fnum, block = getFnumBlock(freq)
   opidxs = opidxs_per_chan[chan]
   res = b''
+  schan = chan
+  if chan in prev_sets:     # note prior settings so we only reconfigure
+    pchan = prev_sets[chan] # registers which change.
+  else:
+    pchan = None
 
   if not keyon:
-    if chan<9:
-      r = 0xb0 + chan
-      v = ((fnum>>8)&3) | (block<<2)
-      res+=struct.pack('BBB',0x5e,r,v)
-    else:
-      chan-=9
-      r = 0xb0 + chan - 9
-      v = ((fnum>>8)&3) | (block<<2)
-      res+=struct.pack('BBB',0x5f,r,v)
+    if pchan is not None and pchan[2]:
+      if chan<9:
+        r = 0xb0 + chan
+        v = ((fnum>>8)&3) | (block<<2)
+        oplemu.write(0,r,v);              
+        res+=struct.pack('BBB',0x5e,r,v)
+      else:
+        chan-=9
+        r = 0xb0 + chan - 9
+        v = ((fnum>>8)&3) | (block<<2)
+        oplemu.write(1,r,v);      
+        res+=struct.pack('BBB',0x5f,r,v)
+    prev_sets[chan] = (0,0,False)
   else:
     aval = int(0x3F*namp)
     if aval>0x3f:
       aval = 0x3f
     if aval<0:
       aval = 0
-
     if chan<9:
-      r = 0x40 + opidxs[0]  # set volume
-      v = aval
-      res+=struct.pack('BBB',0x5e,r,v)
-
-      r = 0x40 + opidxs[1]
-      v = aval
-      res+=struct.pack('BBB',0x5e,r,v)
-
-      r = 0xA0 + chan  # set low bits of frequency
-      v = fnum&0xff
-      res+=struct.pack('BBB',0x5e,r,v)
-
-      r = 0xb0 + chan  # set key-on and high bits of frequency
-      v = 0b00100000 | ((fnum>>8)&3) | (block<<2)
-      res+=struct.pack('BBB',0x5e,r,v)
+      if (pchan is None) or (pchan[1]!=namp):
+        r = 0x40 + opidxs[0]  # set volume
+        v = aval
+        oplemu.write(0,r,v);              
+        res+=struct.pack('BBB',0x5e,r,v)
+        r = 0x40 + opidxs[1]
+        v = aval
+        oplemu.write(0,r,v);              
+        res+=struct.pack('BBB',0x5e,r,v)
+      if (pchan is None) or (pchan[0]!=freq):
+        r = 0xA0 + chan  # set low bits of frequency
+        v = fnum&0xff
+        oplemu.write(0,r,v);              
+        res+=struct.pack('BBB',0x5e,r,v)
+        r = 0xb0 + chan  # set key-on and high bits of frequency
+        v = 0b00100000 | ((fnum>>8)&3) | (block<<2)
+        oplemu.write(0,r,v);              
+        res+=struct.pack('BBB',0x5e,r,v)
     else:
       chan-=9
       a = opidxs[0] - 18
       b = opidxs[1] - 18
+      if (pchan is None) or (pchan[1]!=namp):
+        r = 0x40 + a # volume
+        v = aval
+        oplemu.write(1,r,v);              
+        res+=struct.pack('BBB',0x5f,r,v)
+        r = 0x40 + b
+        v = aval
+        oplemu.write(1,r,v);              
+        res+=struct.pack('BBB',0x5f,r,v)
+      if (pchan is None) or (pchan[0]!=freq):
+        r = 0xA0 + chan # low bits of freq
+        v = fnum&0xff
+        oplemu.write(1,r,v);              
+        res+=struct.pack('BBB',0x5f,r,v)
+        r = 0xb0 + chan - 9    # key-on and high bits of freq
+        v = 0b00100000 | ((fnum>>8)&3) | (block<<2)
+        oplemu.write(1,r,v);              
+        res+=struct.pack('BBB',0x5f,r,v)
+    prev_sets[schan] = (freq,namp,keyon)
 
-      r = 0x40 + a # volume
-      v = aval
-      res+=struct.pack('BBB',0x5f,r,v)
-      r = 0x40 + b
-      v = aval
-      res+=struct.pack('BBB',0x5f,r,v)
-
-      r = 0xA0 + chan # low bits of freq
-      v = fnum&0xff
-      res+=struct.pack('BBB',0x5f,r,v)
-
-      r = 0xb0 + chan - 9    # key-on and high bits of freq
-      v = 0b00100000 | ((fnum>>8)&3) | (block<<2)
-      res+=struct.pack('BBB',0x5f,r,v)
 
   return res
 # -----------------------------------------------------------------------------
@@ -664,7 +684,7 @@ def fastAnalyze():
   global screen
   global screen_width
   global screen_height  
-
+  global oplemu
   print('Doing spectral peak-detection.')
   all_peaks = []
   slices=0
@@ -737,7 +757,6 @@ def fastAnalyze():
   # TODO: Any of the dozen other synth types supported by the VGM file format!
   outvgm = b'Vgm \xd3\xcb\x00\x00Q\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xcd\xca\x00\x00\x8a\x12}\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x8c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00dz\xda\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
   outvgm+=opl3init()
-
   for row in rows:
     chan = 0
     for freq,amp,peakheight in row:
@@ -752,6 +771,7 @@ def fastAnalyze():
         namp = 1
       outvgm += opl3params(freq,namp,chan,keyon)
       chan += 1
+    oplemu.render_ms(1000/SLICE_FREQ)
     outvgm+=struct.pack("<BH",0x61,int(44100/SLICE_FREQ))
 
   outvgm+=b'\x66'
@@ -766,7 +786,18 @@ def fastAnalyze():
   print(f'{slices} slices, {len(rows)} frames')
   print(f'{min_height=} {max_height=}')
 
-  playrows(rows)
+  print('\nPlaying synthesized result...',end='')
+  sys.stdout.flush()
+  s=[]
+  for i in range(0,len(oplemu._output),4):
+    l=struct.unpack('<h',oplemu._output[i:i+2])[0]
+    r=struct.unpack('<h',oplemu._output[i+2:i+4])[0]
+    s.append(np.array([l,r],dtype='int16'))
+  s=pygame.sndarray.make_sound(np.array(s))
+  pygame.mixer.Sound.play(s)
+  while pygame.mixer.get_busy(): 
+    pygame.time.Clock().tick(10)         
+  print('Done')
 # -----------------------------------------------------------------------------
 # experimental stuff regarding additive synthesis with sinewaves
 # -----------------------------------------------------------------------------
