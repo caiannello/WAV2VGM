@@ -31,9 +31,9 @@ screen_width=1920
 screen_height=1080
 origspect=None
 SLICE_FREQ = 91.552734375   # frequency at which the synth parameters are altered
-MAX_SYNTH_CHANS = 18   # polyphony of synth (num independent oscillators)
+MAX_SYNTH_CHANS = 8   # polyphony of synth (num independent oscillators)
 OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to an operator
-SPECT_VERT_SCALE = 3  # set vert axis to 7350 Hz max rather than 22050 Hz                      
+SPECT_VERT_SCALE = 1  # 3 would set vert axis to 7350 Hz max rather than 22050 Hz                      
 # -----------------------------------------------------------------------------
 pygame.init()
 try:
@@ -47,9 +47,8 @@ if len(sys.argv)==2:
 else:
   # default input file during dev, if no file specified on the commandline.
   #wavname = 'HAL 9000 - Human Error.wav'
-  #wavname = 'JFK Inaguration.wav'
-  wavname = 'Ghouls and Ghosts - The Village Of Decay.wav'
-  #wavname = 'Amiga-Leander-Intro.wav'
+  wavname = 'JFK Inaguration.wav'
+  #wavname = 'Ghouls and Ghosts - The Village Of Decay.wav'
 
 tempfolder = 'temp\\'
 outfolder = 'output\\'
