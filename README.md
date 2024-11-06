@@ -44,7 +44,7 @@ Peak Detection view of a speech sample
 
 ## Installation
 
-This utility requires Python 3.6+ to be installed, as well as the package manager, python3-pip.
+This utility requires Python 3.8+ to be installed, as well as the package manager, python3-pip.
 
 There are additional dependencies, listed in requirements.txt, which can be be installed 
 from the command-line in Windows, Linux, or Mac by doing something similar to the following:
@@ -61,7 +61,7 @@ sudo pip install numpy pygame scipy PyOPL
 
 ## Usage
 
-Input files must be plain, MONO, 16-bit WAV files, with a 44.1 kHz samplerate.
+Input files must be 16-bit WAV files, MONO, with a 44.1 kHz samplerate. 
 
 Examples of starting the utility from the command-line:
 
