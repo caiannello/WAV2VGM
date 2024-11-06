@@ -31,7 +31,7 @@ screen_width=1920
 screen_height=1080
 origspect=None
 SLICE_FREQ = 91.552734375   # frequency at which the synth parameters are altered
-MAX_SYNTH_CHANS = 8   # polyphony of synth (num independent oscillators)
+MAX_SYNTH_CHANS = 18   # polyphony of synth (num independent oscillators)
 OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to an operator
 SPECT_VERT_SCALE = 1  # 3 would set vert axis to 7350 Hz max rather than 22050 Hz                      
 # -----------------------------------------------------------------------------
