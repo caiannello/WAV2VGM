@@ -107,18 +107,17 @@ There is much room for improvement in this project.
 
   - There should be some settings to tweak to affect the conversion.
 
-  - The output files are much bigger than they really need to be. (Lots of redundancy in
-    the insructions sent to the OPL3, e.g. the same frequency being sent repeatedly, even
-    if it hasn't changed.)
+  - The output files are than they really need to be. (Redundancy in the instructions sent
+    to the OPL3, e.g. the same frequency being sent repeatedly, even if it hasn't changed.)
 
   - The quality of the output could be HUGELY BETTER: The resynthesis method currently 
     only contains pure sine waves (1-operator, basically), rather than any of the advanced
-    features offered in OPL3 juch as 2-op, 4-op, percussion modes, vibrato, tremolo, 
-    or volume envelopes.
+    features offered in OPL3 juch as 2-op, 4-op, percussion modes, waveforms besides sine,
+    volume envelopes, vibrato, tremolo, etc.
 
-  - It would be super easy to add OPL2 support, since nearly the same but with less
-    channels. Many of the synthesizers supported by the VGM file format would be
-    a good fit with this project and should be added.
+  - It would be super easy to add OPL2 support, since it's nearly the same except
+    with less channels. (Many of the synthesizers supported by the VGM file format 
+    would be a good fit with this project and should be added.)
 
   - I want to someday make a super slow version that iteratively brute-forces different 
     opl register combos, 2-op, 4-op, etc, to try to better approximate the input at
