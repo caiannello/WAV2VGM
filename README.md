@@ -83,6 +83,7 @@ If all is well, after some time, a window should appear which displays a spectro
 the input sound. From here, a few different commands can be issued by pressing the 
 following (lowercase) keys:
 
+```
   p - Play original sound (currently, program is unresponsive during playback)
   f - Analyze the sound and outputs a VGM file to the output/ directory.
       The file can be played using WINAMP, VGMPLAY, or even a real YMF262M (OPL3) chip!
@@ -91,7 +92,7 @@ following (lowercase) keys:
   a - Analyze the spectrum and show frequency peaks.
 
   Or close the window to Quit.
-
+```
   Clicking on the displayed spectrogram sets some cursors, but these don't yet 
   do anything useful.
 
