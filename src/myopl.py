@@ -48,24 +48,11 @@ class myopl:
 			self._opl.getSamples(tmp_buffer)
 			self._output += tmp_buffer
 
-	def render_dro(self):
+	def do_init(self):
 		# Reset (may not be required)
 		for bank in range(2):
 			for reg in range(0x100):
 				self.write(bank, reg, 0x00)
-
-		# Render all instructions
-		for entry in self._dro:
-			if entry[0] == DROInstructionType.DELAY_MS:
-				_, delay_ms = entry
-				self.render_ms(delay_ms)
-				#print(delay_ms)
-			else:
-				_, bank, reg, val = entry
-				#print(bank, reg, val)
-				self.write(bank, reg, val)
-
-		return self._output
 
 	def write(self, bank: int, register: int, value: int) -> None:
 		self._opl.writeReg(register | (bank << 2), value)
