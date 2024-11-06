@@ -1,4 +1,4 @@
-# taken from pip module:  pyopl
+# Adapted from MyOPL-Master: regression test
 # adapted from DRO Trimmer by Laurence Dougal Myers.
 import array
 from enum import Enum
