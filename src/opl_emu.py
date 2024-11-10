@@ -1,4 +1,4 @@
-# Adapted from MyOPL-Master: regression test
+# Adapted from opl_emu-Master: regression test
 # adapted from DRO Trimmer by Laurence Dougal Myers.
 import array
 from enum import Enum
@@ -7,7 +7,8 @@ import typing
 import pyopl
 
 
-class myopl:
+class opl_emu:
+	reg_settings = {}
 	def __init__(self) -> None:
 		self._bit_depth = 16
 		self._buffer_size = 512
@@ -55,4 +56,5 @@ class myopl:
 				self.write(bank, reg, 0x00)
 
 	def write(self, bank: int, register: int, value: int) -> None:
+		self.reg_settings[(bank,register)] = value
 		self._opl.writeReg(register | (bank << 2), value)

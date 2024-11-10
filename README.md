@@ -19,6 +19,7 @@ Directory Content:
   doc -                 Currently just some screenshots
   input -               Some same wave files to use as input
   output -              Those waves, converted to OPL3, as VGM and MP3 file
+  repertoire -          WIP experimental stuff
   src -                 Project source code
   WAV2VGM.py -          Main executable
 
@@ -92,9 +93,10 @@ following (lowercase) keys:
   a - Analyze the spectrum and show frequency peaks.
 
   Or close the window to quit.
+
 ```
   Clicking on the displayed spectrogram sets some cursors, but these don't yet 
-  do anything useful.
+  do anything useful and might even crash the app, but kinda fun to play with.
 
 ## Notes
 

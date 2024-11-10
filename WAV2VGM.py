@@ -18,12 +18,15 @@ import math
 from scipy import signal
 import numpy as np
 from src import spect as sp
-from src import myopl as opl
+from src import opl_emu as opl
 import struct
 import gzip
 import sys
 import pyopl
-
+import random
+import datetime
+import pprint
+import os
 # -----------------------------------------------------------------------------
 # TODO:  Make a bunch of this stuff user-configurable!
 
@@ -33,7 +36,7 @@ origspect=None
 SLICE_FREQ = 91.552734375   # frequency at which the synth parameters are altered
 MAX_SYNTH_CHANS = 18   # polyphony of synth (num independent oscillators)
 OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to an operator
-SPECT_VERT_SCALE = 1  # 3 would set vert axis to 7350 Hz max rather than 22050 Hz                      
+SPECT_VERT_SCALE = 3  # 3 would set vert axis to 7350 Hz max rather than 22050 Hz                      
 # -----------------------------------------------------------------------------
 pygame.init()
 try:
@@ -47,13 +50,12 @@ if len(sys.argv)==2:
 else:
   # default input file during dev, if no file specified on the commandline.
   #wavname = 'HAL 9000 - Human Error.wav'
-  wavname = 'JFK Inaguration.wav'
-  #wavname = 'Ghouls and Ghosts - The Village Of Decay.wav'
-
-tempfolder = 'temp\\'
+  #wavname = 'JFK Inaguration.wav'
+  wavname = 'Ghouls and Ghosts - The Village Of Decay.wav'
+infolder = 'input\\'
 outfolder = 'output\\'
 vpath = outfolder+wavname[0:-3]+"vgz"
-origspect = sp.spect(wav_filename='input\\'+wavname,nperseg=4096)
+origspect = sp.spect(wav_filename='input\\'+wavname,nperseg=4096,quiet=False,clip=True)
 clock = pygame.time.Clock()
 screen=pygame.display.set_mode([screen_width,screen_height])#,flags=pygame.FULLSCREEN)
 pygame.display.set_caption(f'Mimic - Spectrogram - {wavname}')
@@ -72,8 +74,8 @@ CLICKED_SPECTROGRAM = 1
 last_clicked = -1
 T_AXIS_HEIGHT = 21
 # -----------------------------------------------------------------------------
-# draws the pygame surface member of the spectrogram class, 
-# scaled to the current display size and SPECT_VERT_SCALE factor.
+# draws the source spectrogram, scaled to the current display size and 
+# SPECT_VERT_SCALE factor.
 # -----------------------------------------------------------------------------
 def drawSpect(spect = None, xx=0,yy=0,ww=screen_width,hh=screen_height):
   global screen, font, smallfont, roi
@@ -105,18 +107,18 @@ def drawSpect(spect = None, xx=0,yy=0,ww=screen_width,hh=screen_height):
       pygame.draw.line(screen, (192,192,192), (scr_x,hh-T_AXIS_HEIGHT+1),(scr_x,hh-T_AXIS_HEIGHT+3))
     t+=secs_per_t_tick
   '''
-  # draw vertical gridlines
+  # draw vertical gridlines at SLICE_FREQ intervals
   tstart = 0
-  t=tstart
+  t = tstart
   specdrawheight = screen_height-T_AXIS_HEIGHT
-  while t<(tstart+onscreen_dur):    
+  while t<(tstart+onscreen_dur):
     scr_x = int((t-tstart)*screen_width/(tstart+onscreen_dur)) 
-    for y in range(0,specdrawheight): 
-      if (y%3) == 0:
-        #c=screen.get_at((scr_x, y))
-        #ic = (255-c[0],255-c[1],255-c[2])
-        pygame.draw.line(screen, (0,0,0), (scr_x,y),(scr_x,y))
-    t+=secs_per_t_tick
+    q=0
+    for y in range(0,specdrawheight,2): 
+      if q&1:
+        pygame.draw.line(screen, (0,0,0), (scr_x,y-1),(scr_x,y))
+      q+=1
+    t+=1/SLICE_FREQ
   '''
   # highlight selected spectrum on spectrogram (dotted)
   if roi>=0:
@@ -148,22 +150,19 @@ def plotText(s,x,y):
   screen.blit(img, (x, y))
 # -----------------------------------------------------------------------------
 # given a single spectrum (a vertical slice of spectrogram), identify 
-# all prominent peak. Returns their freqs in Hz and heights in dBFS.
+# all prominent peaks. Returns their freqs in Hz and heights in dBFS.
 # -----------------------------------------------------------------------------
-def getRankedPeaks(tsp):
+def getRankedPeaks(tsp, minv, maxv, do_limit_freqs=True,dist=5,prom=5):
   hh = int(screen_height/4)
   ll = len(tsp)
   hsr = origspect.sample_rate/2
   hnps = origspect.nperseg/2 
-  minv = origspect.minval
-  maxv = origspect.maxval   
-  # get initial peak estimates
-  # todo: center of mass refinement of peak freqs
+  # maybe todo: center-of-mass refinement of peak freqs?
   mypeaks=[]
-  peaks = signal.find_peaks(tsp, height = -100, distance=5, prominence=10) # was d 5 p 10
+  peaks = signal.find_peaks(tsp, height = -100, distance=dist, prominence=prom)
   for peakidx,binnum in enumerate(peaks[0]):
     peak_freq = hsr-binnum*hsr/hnps
-    if peak_freq>OPL3_MAX_FREQ:
+    if do_limit_freqs and (peak_freq>OPL3_MAX_FREQ):
       continue
     peak_height = peaks[1]['peak_heights'][peakidx]
     peak_x = binnum*screen_width/ll
@@ -173,16 +172,18 @@ def getRankedPeaks(tsp):
   mypeaks.sort(key=lambda tup: -tup[0])
   return mypeaks
 # -----------------------------------------------------------------------------
-# draw a single spectrum along the top of screen and mark peaks
+# draw a single spectrum along the top of screen with peaks marked and
+# optional cursors 
 # -----------------------------------------------------------------------------
-def plotTestSpect(tsp):
+def plotTestSpect(tsp,minv,maxv,gcolor=(255,255,255)):
   global screen
   ll = len(tsp)
   ww = int(screen_width)
   hh = int(screen_height/4)
   hsr = origspect.sample_rate/2
-  minv = origspect.minval
-  maxv = origspect.maxval
+
+  if minv==maxv: # dont wanna /0
+    return
 
   # draw freq cutoff line 
   if cutoff_freq>=0:
@@ -194,10 +195,8 @@ def plotTestSpect(tsp):
     pygame.draw.line(screen, (255,255,0), (0,amp_cutoff_y),(ww-1,amp_cutoff_y))
     plotText("cutoff={}".format(amp_cutoff),0,amp_cutoff_y)
 
-  # draw single spectrum's peaks
-
-  mypeaks=getRankedPeaks(tsp)
-
+  # draw spectrum peaks ith kinda-gradient colors
+  mypeaks=getRankedPeaks(tsp, minv, maxv, False)
   for i,(peak_height,peak_freq,peak_x,peak_y,peak_prominence) in enumerate(mypeaks):
     r = 255*(peak_height-minv)/(maxv-minv)
     if i==0:
@@ -205,17 +204,47 @@ def plotTestSpect(tsp):
     else:
       pygame.draw.line(screen, (r,r/8,255-r), (peak_x,peak_y-10),(peak_x,peak_y+10))
 
-  # draw single spectrum 
+  # draw spectrum 
   for i in range(0,ll-1):
-    x0=i*screen_width/ll
-    x1=(i+1)*screen_width/ll
-    v0=(tsp[i]-minv)*hh/(maxv-minv)
-    v1=(tsp[i+1]-minv)*hh/(maxv-minv)
+    x0=int(i*screen_width/ll)
+    x1=int((i+1)*screen_width/ll)    
+    v0=int((tsp[i]-minv)*hh/(maxv-minv))
+    v1=int((tsp[i+1]-minv)*hh/(maxv-minv))
+    if tsp[i]<minv or tsp[i+1]<minv:      
+      continue
     y0=hh-1-v0
     y1=hh-1-v1
-    pygame.draw.line(screen, (255,255,255), (x0,y0),(x1,y1))
+    if x0>=ww and x1>ww:
+      break
+    try:
+      pygame.draw.line(screen, gcolor, (x0,y0),(x1,y1))
+    except Exception as e:
+      print(f'{e} {(x0,y0)=}-{(x1,y1)=} {i=} {screen_width=} {ll=}')
 
   return mypeaks
+# -----------------------------------------------------------------------------
+# draw a single spectrum along the top of screen without peaks marked
+# -----------------------------------------------------------------------------
+def plotTestSpectSimple(tsp,minv, maxv,gcolor=(255,255,255)):
+  global screen
+  ll = len(tsp)
+  ww = int(screen_width)
+  hh = int(screen_height/4)
+  hsr = origspect.sample_rate/2
+  if minv==maxv:     # dont wanna /0
+    return
+  for i in range(0,ll-1):
+    x0=int(i*screen_width/ll)
+    x1=int((i+1)*screen_width/ll)    
+    v0=int((tsp[i]-minv)*hh/(maxv-minv))
+    v1=int((tsp[i+1]-minv)*hh/(maxv-minv))
+    if tsp[i]<minv or tsp[i+1]<minv:      
+      continue
+    y0=hh-1-v0
+    y1=hh-1-v1
+    if x0>=ww and x1>ww:
+      break
+    pygame.draw.line(screen, gcolor, (x0,y0),(x1,y1))
 # -----------------------------------------------------------------------------
 # dBFS value per gradient keycolor      
 p0 = -115.0   # black
@@ -264,7 +293,7 @@ def gradColor(x):
 # -----------------------------------------------------------------------------
 # draw single spectrum's peaks on its spot in the displayed spectrogram
 # -----------------------------------------------------------------------------
-def plotPeaks(roi,slen, dur_secs, tsp):
+def overlayPeaksOnSpectrum(roi,slen, tsp):
   global screen
   ll = len(tsp)
   ww = int(screen_width)
@@ -274,41 +303,120 @@ def plotPeaks(roi,slen, dur_secs, tsp):
   maxv = origspect.maxval
   rx = roi*ww/slen
   rw = (((roi+1)*ww/slen)-rx)+1
+
+  # todo: draw a transparent black rect over the 
+  # original spectrum so our detected peaks pop.
+  # curently, this bar is opaque, fully hiding the spectrum
   pygame.draw.rect(screen, (0,0,0), (rx,0,rw,hh))
-  mypeaks=getRankedPeaks(tsp)
-  spect_t = roi*dur_secs/slen
-  if len(mypeaks)<=(MAX_SYNTH_CHANS*2):
-    s0 = 0
-    s1 = len(mypeaks)
-  else:
-    # if theres a lot of peaks, eliminate some poorly ranked ones from the plot.
-    s0 = 0
-    s1 = (MAX_SYNTH_CHANS*2)
-  print(f'{spect_t:9.4f}: ',end='')
+
+  mypeaks=getRankedPeaks(tsp,minv, maxv,True)
+  s0 = 0
+  s1 = len(mypeaks)
   points = []
-  loudest = None
   for i,(peak_height,peak_freq,peak_x,peak_y,peak_prominence) in enumerate(mypeaks[s0:s1]):
-    if peak_height < -96:
-      continue
-    r = 255*(peak_height-minv)/(maxv-minv)
-    if i<MAX_SYNTH_CHANS and  peak_height >= -48:
-      print(f'({peak_freq:6.1f},{peak_height:4.0f}) ',end='')
-    if i<MAX_SYNTH_CHANS:
-      # top peaks get normal colors
-      c=gradColor(peak_height)
-    else:
-      # less prominent ones get drab monochrome colors
-      c=(r,r,r)
+    adj_height = peak_height-maxv # normalize volume
+    c=gradColor(adj_height)
     ry = hh-peak_freq*hh/hsr
     pygame.draw.rect(screen, c, (rx,ry,rw,2))
-    points.append((spect_t, float(peak_freq), float(peak_height)))
-    if loudest is None or peak_height>loudest:
-      loudest=peak_height
-  if loudest is None:
-    print(f' <None>')
-  else:
-    print(f' <{loudest:6.2f}>')
+    if adj_height >= -48.0:  # loud enough for OPL channel volume setting
+      points.append((float(peak_freq), float(adj_height)))
   return points
+# -----------------------------------------------------------------------------
+# do peak detect on whole displayed spectrogram, find runs of peaks, 
+# and draw them
+# -----------------------------------------------------------------------------  
+def analyzePeakRuns():
+  global origspect, roi
+  global screen
+  global screen_width
+  global screen_height  
+
+  slen = len(origspect.spectrogram)
+  # keeps track of runs of spectral peaks
+  freq_runs = {}
+  prior_peaks = []
+  for roi in range(0,slen):  # for each spectrum in spectrogram
+    # Check if user wants to close program
+    for event in pygame.event.get():
+      if event.type == pygame.QUIT:  
+        return True# raise SystemExit    
+    # start time of this spectrum within the sound
+    t = roi*origspect.dur_secs/slen        
+
+    # draws a vertical slice of spectral peaks over top of 
+    # spectrum[roi] of the spectrogram, and returns a list of peak 
+    # (freq,height) values sorted by descending height
+    peaks = overlayPeaksOnSpectrum(roi,slen,origspect.spectrogram[roi])
+
+    # see which peaks are new, and which are continuations of prior peaks.
+    # New ones set a new named run-record, and others get appended onto the
+    # existing one.
+
+    #print(f"{t:6.3f} ")
+    new_prior_peaks = []
+    for i,(f,h) in enumerate(peaks):
+      mindif = 50000
+      closest = None
+      for j,(pf,ph,rkey) in enumerate(prior_peaks):
+        fdif = abs(f-pf)
+        if fdif<mindif:
+          mindif = fdif
+          closest = (j,pf,ph,rkey) 
+      continuation = False
+      if closest is not None:
+        if mindif<35:          
+          #print(f'{f:0.1f}->{closest[1]:0.1f} ', end='')
+          continuation=True
+          rkey = closest[3]
+          freq_runs[rkey].append((t,f,h))
+      if not continuation:
+        #print(f'{f:0.1f} ', end='')
+        rkey = (t,f)
+        freq_runs[rkey] = [(t,f,h)] # new run
+      new_prior_peaks.append((f,h,rkey))
+    prior_peaks = new_prior_peaks
+    #print()
+    pygame.display.update()
+
+  draw_runs = False
+  if draw_runs:     # draw the freq runs in dif colors
+    ll = len(origspect.spectrogram[roi])
+    ww = int(screen_width)
+    hh = int(screen_height) - T_AXIS_HEIGHT
+    hsr =  (origspect.sample_rate/2)/SPECT_VERT_SCALE
+    minv = origspect.minval
+    maxv = origspect.maxval
+    pygame.draw.rect(screen, (0,0,0), (0,0,ww,hh))
+    for rkey in freq_runs:
+      run = freq_runs[rkey]
+      if len(run)>=3:
+        #print(f'{rkey}:')
+        c0 = (random.randint(0,255),random.randint(0,255),random.randint(0,255))
+        t,f,h = run[0]
+        #print(f'    {(t,f,h)}')    
+        r0 = t*slen/origspect.dur_secs
+        x0 = int(r0*ww/slen)
+        y0 = hh-int(f*hh/hsr)
+        h0 = h
+        for t,f,h in run[1:]:
+          r1 = t*slen/origspect.dur_secs
+          x1 = int(r1*ww/slen)
+          y1 = hh-int(f*hh/hsr)
+          h1 = h
+          #print(f'    {(t,f,h)}')  
+          m = 1.0-(h/(-48))
+          rr = int(c0[0]*m)
+          gg = int(c0[1]*m)
+          bb = int(c0[2]*m)
+          c1 = (rr,gg,bb)        
+          pygame.draw.line(screen, c1, (x0,y0),(x1,y1),2)
+          r0=r1
+          x0=x1
+          y0=y1
+          h0=h1
+        pygame.display.update()
+        #print()
+    return False
 # -----------------------------------------------------------------------------
 # WIP UI stuff
 # -----------------------------------------------------------------------------
@@ -333,7 +441,7 @@ def newROI():
   global roi
   drawSpect(origspect,0,0,screen_width,screen_height)
   if roi>=0 and roi<len(origspect.spectrogram):
-    plotTestSpect(origspect.spectrogram[roi])
+    plotTestSpect(origspect.spectrogram[roi],origspect.minval,origspect.maxval)
   pygame.display.update()
 # -----------------------------------------------------------------------------  
 # WIP UI stuff
@@ -367,32 +475,13 @@ def handleMouseDown(event):
       sy=int(my*origspect.maxcolidx/(screen_height-T_AXIS_HEIGHT))
       v=origspect.spectrogram[sx][sy]
       roi = sx
+      print(f'ROI {sx}')
       #s='mx,my = {:4d},{:4d} freq={:5.2f}, t={:4.4f}, v={:4.1f}    '.format(mx,my,freq,t,v)
       #plotText(s,4,4)
     elif event.button == 3: # right click selects cutoff frequency on spectrogram
       cutoff_freq = freq
 
   newROI()
-# -----------------------------------------------------------------------------
-# do peak detect on whole displayed spectrogram and draw those peaks
-# -----------------------------------------------------------------------------  
-def analyze():
-  global origspect, roi
-  global screen
-  global screen_width
-  global screen_height  
-  point_cloud = []
-  for roi in range(0,len(origspect.spectrogram)):
-    for event in pygame.event.get():
-      if event.type == pygame.QUIT:  # Usually wise to be able to close your program.
-        return True# raise SystemExit    
-    #pygame.draw.rect(screen, (0,0,0), (0,0,screen_width,int(screen_height/4)))
-    #mypeaks = plotTestSpect(origspect.spectrogram[roi])    
-    point_cloud += plotPeaks(roi,len(origspect.spectrogram),origspect.dur_secs, origspect.spectrogram[roi])
-    pygame.display.update()
-  point_cloud.sort(key=lambda tup: -tup[2])
-  print(point_cloud)
-  return False
 # -----------------------------------------------------------------------------
 # Plays the sound that the spectrogram is made from
 # -----------------------------------------------------------------------------  
@@ -427,7 +516,98 @@ def getFnumBlock(freq):
   fnum = round(freq*pow(2,19)/fsamp/pow(2,block-1))
   return fnum,block
 # -----------------------------------------------------------------------------
-# Sequence to init the OPL3 chip to allow 18 channels of plain sine waves.
+# Setup the OPL emulator with the specified register values, generate 4096 
+# audio samples, and return resultant frequency spectrum.
+# -----------------------------------------------------------------------------
+def renderOPLFrame(opl_regs):
+  o = opl.opl_emu()
+  o.do_init()
+  for (b,r) in opl_regs:
+    v = opl_regs[(b,r)]
+    o.write(b,r,v)
+  o._output = bytes()
+  o._render_samples(4096)  
+  w = []
+  for i in range(0,len(o._output),4):
+    l=struct.unpack('<h',o._output[i:i+2])[0]
+    r=struct.unpack('<h',o._output[i+2:i+4])[0]
+    w.append((l+r)//2)
+  w = np.array(w, dtype="int16")
+  if w.sum():
+    newspect = sp.spect(wav_filename = None, sample_rate=44100,samples=w,nperseg=4096, quiet=True)
+  else:
+    newspect  = None
+  return newspect
+
+def thumbDif(ttest, torig):
+  l = len(torig)
+  dif = 0
+  for i in range(l):
+    tmin,tmax = ttest[i]  # (min, max)
+    if tmin<-115:
+      tmin = -115
+    omin,omax = torig[i]  # (min, max)    
+    a = omin-tmin
+    b = omax-tmax
+    dif += a*a + b*b
+  return dif
+
+def plotThumb(t, c):
+  global screen_width
+  global screen_height  
+  ww = int(screen_width)
+  hh = int(screen_height/4)
+  for i in range(63):
+    x0 = int(i*ww/64)
+    x1 = int((i+1)*ww/64)
+    min0 = t[i][0]
+    max0 = t[i][1]
+
+    v0=int((min0+115)*hh/115)
+    y0=hh-1-v0
+    if y0>=0 and y0<hh:
+      pygame.draw.line(screen,c,(x0,y0),(x1,y0))
+
+    v1=int((max0+115)*hh/115)
+    y1=hh-1-v1
+    if y1>=0 and y1<hh:
+      pygame.draw.line(screen,c,(x0,y1),(x1,y1))
+
+# -----------------------------------------------------------------------------
+# WIP EXPERIMENT- Try to brute-force the best OPL3 settings for each frame 
+# of the spectrogram.
+# -----------------------------------------------------------------------------
+def bruteForce():
+  global origspect
+  global screen
+  global screen_width
+  global screen_height  
+  ww = int(screen_width)
+  hh = int(screen_height//4)
+  slen = len(origspect.spectrogram)
+  with open(outfolder+'matching_set_fidxs.txt','wt') as f:
+    f.write('get settings from training set at these file indices:\n')
+  for roi in range(0,slen):  # for each spectrum in orig spectrogram
+
+    # Check if user wants to close program
+    for event in pygame.event.get():
+      if event.type == pygame.QUIT:  
+        return True
+
+    # this is the spectrum we want recreate
+    ospect = origspect.spectrogram[roi]
+    #othumb = spectThumbnails(ospect)[64]
+    pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
+    plotTestSpect(ospect,-115.0,0)     
+    #plotThumb(othumb,(255,255,255)) 
+    pygame.display.update()
+    
+    with open(outfolder+'matching_set_fidxs.txt','at') as f:
+      f.write(f'{roi} {0}\n')
+# -----------------------------------------------------------------------------
+# Make sequence to init the OPL3 chip.
+#
+# Currently, we set it up to do 18 plain sine waves.
 # -----------------------------------------------------------------------------
 prev_sets = {}
 oplemu = None
@@ -436,7 +616,7 @@ def opl3init():
   global prev_sets, oplemu
   prev_sets = {}
 
-  oplemu = opl.myopl()
+  oplemu = opl.opl_emu()
   res = b''
   # enable opl3 mode
   r = 0x05
@@ -563,19 +743,6 @@ def opl3init():
 # -----------------------------------------------------------------------------
 # Returns an OPL3 register set sequence to set a specified channel to 
 # the specified frequency, volume, and/or key on/off.
-#
-# TODO: we really shouldn't need to set everything on every channel/frame!
-# We should instead pigenhole peaks to specific channels and keep them there
-# for as many frames as needed. That way, we only need to set things that have
-# changed since the previous frame. This should reduce the output file size
-# and may even sound better!
-# 
-# Also TODO: OPL3 can do way more than just play sine waves. It would be 
-# nice if the analysis could identify use cases for  2-op and 4-op 
-# instruments, percussion, noise, vibratoo, tremolo, and whatever else we can
-# take advantage of! (Not easy. Might need an AI, eventually, or at least 
-# some better pattern-matching than the simple spectral peak-detect we're 
-# currently doing.)
 # -----------------------------------------------------------------------------
 def opl3params(freq,namp,chan, keyon):
   global prev_sets, oplemu
@@ -588,7 +755,7 @@ def opl3params(freq,namp,chan, keyon):
   else:
     pchan = None
 
-  if not keyon:
+  if not keyon:               # key off
     if pchan is not None and pchan[2]:
       if chan<9:
         r = 0xb0 + chan
@@ -602,7 +769,7 @@ def opl3params(freq,namp,chan, keyon):
         oplemu.write(1,r,v);      
         res+=struct.pack('BBB',0x5f,r,v)
     prev_sets[chan] = (0,0,False)
-  else:
+  else:                         # key on
     aval = int(0x3F*namp)
     if aval>0x3f:
       aval = 0x3f
@@ -684,35 +851,22 @@ def fastAnalyze():
   global screen_width
   global screen_height  
   global oplemu
+  minv = origspect.minval
+  maxv = origspect.maxval
+
   print('Doing spectral peak-detection.')
   all_peaks = []
   slices=0
   ll = len(origspect.spectrogram)
   tt = origspect.maxtime - origspect.mintime
   for r in range(0,ll):
-    all_peaks.append(getRankedPeaks(origspect.spectrogram[r]))
+    all_peaks.append(getRankedPeaks(origspect.spectrogram[r],minv,maxv,True))
     slices+=1
   max_amp = 0
   min_amp = 9999999
   max_height = -999999
   min_height = 9999999
 
-  '''
-  # show all spect peaks, not just the timeslices
-  print('ALL PEAKS')
-  for pi, peaks in enumerate(all_peaks):
-    t = pi * tt / ll   # get slice timestamp
-    print('Slice {:6d} ({:3.3f}s):'.format(pi, t),end='')
-    row = []
-    for i,(peak_height,peak_freq,peak_x,peak_y,peak_prominence) in enumerate(peaks):
-      if i>=MAX_SYNTH_CHANS:
-        break
-      print('({:8.2f},{:5d}), '.format(peak_freq,int(peak_height)),end='')
-    print()
-  print('\n\n\n')
-  '''
-
-  #print('SLICE PEAKS')
   rows = []
   lt = 0
   for pi, peaks in enumerate(all_peaks):
@@ -722,15 +876,11 @@ def fastAnalyze():
       lt = t
       do_slice = True
     if do_slice:
-      #print('Slice {:6d}: t {:3.2f}:'.format(pi, t),end='')
       row = []
       for i,(peak_height,peak_freq,peak_x,peak_y,peak_prominence) in enumerate(peaks):
-        #print('({:8.2f},{:4d}), '.format(peak_freq,int(peak_height)),end='')
         wave_amp = 37369.0 * math.exp(0.1151 * peak_height)
-        #print("wa vs ph",wave_amp, peak_height)
         if i>=MAX_SYNTH_CHANS:
           break
-        #print('({:8.2f},{:4d},{:4d}), '.format(peak_freq,int(peak_height),int(wave_amp)),end='')
         if wave_amp < min_amp:
           min_amp = wave_amp
         if wave_amp > max_amp:
@@ -739,16 +889,13 @@ def fastAnalyze():
           max_height = peak_height
         if peak_height < min_height:
           min_height = peak_height
-        #print('({:8.2f},{:5d}), '.format(peak_freq,int(peak_height)),end='')
         row.append([peak_freq, wave_amp, peak_height])
       k = len(row)
       while k<MAX_SYNTH_CHANS:
         row.append([0,0,-96.0])
         k+=1
       rows.append(row)
-      #print()
-  #print('\n\n\n')
-
+  
 
   # make and write the VGZ output file
   print('Making output file (VGZ)...')
@@ -784,114 +931,26 @@ def fastAnalyze():
 
   print(f'{slices} slices, {len(rows)} frames')
   print(f'{min_height=} {max_height=}')
-
   print('\nPlaying synthesized result...',end='')
   sys.stdout.flush()
   s=[]
+  gs=[]
   for i in range(0,len(oplemu._output),4):
     l=struct.unpack('<h',oplemu._output[i:i+2])[0]
     r=struct.unpack('<h',oplemu._output[i+2:i+4])[0]
     s.append(np.array([l,r],dtype='int16'))
+    gs.append( (l+r)//2)
+
+  gs = np.array(gs,dtype='int16')
+  outspect = sp.spect(wav_filename=None,samples=gs,nperseg=4096,quiet=False,clip=True)
+  drawSpect(outspect,0,0,screen_width,screen_height)
+
   s=pygame.sndarray.make_sound(np.array(s))
   pygame.mixer.Sound.play(s)
   while pygame.mixer.get_busy(): 
-    pygame.time.Clock().tick(10)         
+    pygame.time.Clock().tick(10)
+
   print('Done')
-# -----------------------------------------------------------------------------
-# experimental stuff regarding additive synthesis with sinewaves
-# -----------------------------------------------------------------------------
-def calibrate():
-  global origspect
-
-  print("Correlating wave amplitude to dbFS")
-  res = ''
-  ns=int(44100/8)
-  for v0 in [8192, 3096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1]:    
-    ct=0
-    av=0
-    for f0 in range(1000,20000,1000):
-      wav = []
-      for i in range(0,ns):
-        f = (i*2.0*3.1415926536/44100.0)
-        a0 = v0*math.sin(f * (f0))
-        a1 = v0*math.sin(f * (f0+250))
-        a2 = v0*math.sin(f * (f0+500))
-        a3 = v0*math.sin(f * (f0+750))
-        wav.append(a0+a1+a2+a3)
-      wav = np.array(wav)
-      otherspect = sp.spect(samples=wav)
-      mv=otherspect.maxval
-      av+=mv
-      ct+=1
-      # otherspect = sp.spect(wav_filename='explainer.wav')
-      sh2=screen_height
-      drawSpect(otherspect,0,0,screen_width,sh2)
-      for event in pygame.event.get():
-        if event.type == pygame.QUIT:  # Usually wise to be able to close your program.
-          raise SystemExit      
-      clock.tick(30)      
-    s='{:5d}\t{:f}'.format(v0,av/ct)
-    res+=s+'\n'
-  print('cal results\nwave_amp\tdbFS')
-  print(res)
-
-  # dBFS = 8.6859 * ln(wav_amplitude) - 91.45
-  # wave_amplitude = 37369 * e ^ (0.1151 * dBFS)
-# -----------------------------------------------------------------------------
-# arpeggio synthesis experiment
-# -----------------------------------------------------------------------------
-def synth():
-  global origspect
- 
-  ns=int(44100*4)
-  wav = []
-
-  a0=0
-  a1=0
-  a2=0
-  a3=0
-
-  v0=0
-  v1=0
-  v2=0
-  v3=0
-
-  dv0=0
-  dv1=0.03
-  dv2=0.03
-  dv3=0.03
-  
-  j=0
-  k=0
-  for i in range(0,ns):
-    j+=1
-    if j==2000:
-      j=0
-      k+=1
-      if k==3:
-        k=0
-
-    f = (i*2.0*3.1415926536/44100.0)
-    a0 = v0*math.sin(f * 440.0*3)
-    a1 = v1*math.sin(f * 523.25)
-    a2 = v2*math.sin(f * 415.30)
-    a3 = v3*math.sin(f * 349.23)
-    v0+=dv0
-    v1+=dv1
-    v2+=dv2
-    v3+=dv3
-    #wav.append(a1+a2+a3)
-    if k==0:
-      wav.append(a1)
-    elif k==1:
-      wav.append(a2)
-    elif k==2:
-      wav.append(a3)
-  wav = np.array(wav)
-  origspect = sp.spect(samples=wav)    
-  sh2=screen_height
-  drawSpect(origspect,0,0,screen_width,sh2)
-
 # -----------------------------------------------------------------------------
 # arrows move cursor, if any, which could be either on spectrum or spectrogram
 # spectrum: 
@@ -917,18 +976,21 @@ def loop():
     elif event.type == pygame.KEYDOWN:
       if event.key == pygame.K_ESCAPE:
         return True
-      elif event.key == pygame.K_s:
-        synth()
-      elif event.key == pygame.K_c:
-        calibrate()
       elif event.key == pygame.K_a:
-        doquit = analyze()
+        doquit = analyzePeakRuns()
         if doquit:
           return True
       elif event.key == pygame.K_f:
         fastAnalyze()
       elif event.key == pygame.K_p:
         playWave()
+      elif event.key == pygame.K_b:
+        bruteForce()
+      elif event.key == pygame.K_d:
+        allthumbs = {}
+        for roi in range(44,46):
+          allthumbs[roi] = spectThumbnails(origspect.spectrogram[roi])
+        pprint.pprint(allthumbs, indent=2)
       elif event.key == pygame.K_UP:
         if last_clicked == CLICKED_SPECTROGRAM:
           if cutoff_freq<(hsr/2-4):
@@ -944,7 +1006,6 @@ def loop():
           pass
         newROI()
       elif event.key == pygame.K_LEFT:
-        #print("Player moved left!")
         if last_clicked == CLICKED_SPECTROGRAM:
           if roi>-1:
             roi-=1
@@ -952,7 +1013,6 @@ def loop():
           pass
         newROI()
       elif event.key == pygame.K_RIGHT:
-        #print("Player moved right!")  
         if last_clicked == CLICKED_SPECTROGRAM:
           if roi<len(origspect.spectrogram):
             roi+=1

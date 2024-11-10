@@ -53,8 +53,9 @@ class spect:
     [ -0.0,    (  255,  255,  255 )]    # white
   ]  
   # ---
-  def __init__(self,wav_filename = None,sample_rate=44100,samples=None,nperseg=4096):
+  def __init__(self,wav_filename = None,sample_rate=44100,samples=None,nperseg=4096,quiet=False, clip=True):
     self.nperseg = nperseg
+    self.clip = clip
     if not wav_filename is None:
       lg('loading wav {}.'.format(wav_filename))
       self.wav_filename = wav_filename
@@ -83,11 +84,13 @@ class spect:
       self.num_samps = len(self.samples)      
       self.minsamp = self.samples.min()
       self.maxsamp = self.samples.max()
+    self.quiet = quiet
     self.genSpect()
   # ---
   def genSpect(self):
     if not self.samples is None:
-      lg('[+] gen spectrum ({} samps):'.format(self.num_samps))
+      if not self.quiet:
+        lg('[+] gen spectrum ({} samps):'.format(self.num_samps))
       # make spectrogram from provided wav
       self.frequencies, self.times, self.spectrogram = signal.spectrogram(
           self.samples, self.sample_rate,
@@ -99,16 +102,26 @@ class spect:
           )
       rawmin=self.spectrogram.min()
       rawmax=self.spectrogram.max()
-      lg('   samples min/max {}/{}'.format(self.minsamp,self.maxsamp))      
-      lg('raw  spect min/max {:1.2f}/{:.2f}'.format(rawmin,rawmax))
+      self.rawbin_low = rawmin
+      self.rawbin_high = rawmax
+
+      if not self.quiet:
+        lg('   samples min/max {}/{}'.format(self.minsamp,self.maxsamp))      
+        lg('raw  spect min/max {:1.2f}/{:.2f}'.format(rawmin,rawmax))
 
       # highest bin when full-scale 8 kHz sine wave
-      absmax=18137
-      if rawmax>absmax:
-        absmax=rawmax
+      if self.clip:
+        absmax=16384
+        if rawmax>absmax:
+          absmax=rawmax
+      else:
+        absmax = 16384
+        if rawmax>absmax:
+          absmax=rawmax
 
       # scale spectrogram to dBfS
-      lg('  Converting spect bins to dBFS')
+      if not self.quiet:
+        lg('  Converting spect bins to dBFS')
       fscale = lambda x: 20.0*np.log10(x/absmax)
       new_spect = fscale(self.spectrogram)
       self.spectrogram = np.rot90(new_spect,k=3)
@@ -126,10 +139,10 @@ class spect:
       self.minrowidx=0
       self.maxrowidx=len(self.spectrogram/len(self.spectrogram[0]))-1      
 
-      lg('dbfs spect min/max {:1.2f}/{:.2f}'.format(self.minval,self.maxval))
-      lg(f'frequencies: {self.frequencies}')
-
-      lg('  RGB Colorizing')
+      if not self.quiet:
+        lg('dbfs spect min/max {:1.2f}/{:.2f}'.format(self.minval,self.maxval))
+        lg(f'frequencies: {self.frequencies}')
+        lg('  RGB Colorizing')
 
       # p4  white   255,  255,  255
       # p3  yellow  255,  255,  0
@@ -149,12 +162,16 @@ class spect:
         if x<p0:
           return p0
         return x
-      fclip_vec = np.vectorize(fclip)
-      self.spectrogram = fclip_vec(self.spectrogram)
-      self.minval=self.spectrogram.min()
+
+      if self.clip:
+        fclip_vec = np.vectorize(fclip)
+        self.spectrogram = fclip_vec(self.spectrogram)
+        self.minval=self.spectrogram.min()
+
+      if self.quiet:
+        return
 
       # convert dBFS values to gradient colors
-
       def fred(x):
         if x<p1:
           return 0
@@ -191,14 +208,15 @@ class spect:
       self.rgb_map = np.dstack((self.red_map,self.grn_map,self.blu_map)).astype('int32') 
       self.surf = pygame.pixelcopy.make_surface(self.rgb_map)
 
-      lg('spectrum recalc done. dur={}s mincol={} maxcol={} minrow={} maxrow={} minbin={} maxbin={} (dif={})'.format(
-        self.dur_secs,
-        self.mincolidx,
-        self.maxcolidx,
-        self.minrowidx,
-        self.maxrowidx,
-        self.minval,self.maxval,
-        self.maxval-self.minval))
+      if not self.quiet:
+        lg('spectrum recalc done. dur={}s mincol={} maxcol={} minrow={} maxrow={} minbin={} maxbin={} (dif={})'.format(
+          self.dur_secs,
+          self.mincolidx,
+          self.maxcolidx,
+          self.minrowidx,
+          self.maxrowidx,
+          self.minval,self.maxval,
+          self.maxval-self.minval))
   # ---
   # ---
 
