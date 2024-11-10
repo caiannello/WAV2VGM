@@ -109,8 +109,8 @@ There is much room for improvement in this project.
 
   - There should be some settings to tweak to affect the conversion.
 
-  - The output files are than they really need to be. (Redundancy in the instructions sent
-    to the OPL3, e.g. the same frequency being sent repeatedly, even if it hasn't changed.)
+  - The output files are larger than they really need to be. (Redundancy in the instructions
+    sent to the OPL3, e.g. the same frequency being set repeatedly, even if unchanged)
 
   - The quality of the output could be HUGELY BETTER: The resynthesis method currently 
     only contains pure sine waves (1-operator, basically), rather than any of the advanced
