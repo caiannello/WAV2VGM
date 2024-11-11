@@ -104,7 +104,7 @@ following (lowercase) keys:
       
       The usefulness of the training set for this purpose is dubious as best, since the
       the matches get further refined using a genetic algorithm, which is always fun, so
-      maybe can just trart with random-everything and skip the search step before doing
+      maybe can just start with random-everything and skip the search step before doing
       the genetic stuff.
 
       TODO: Use training set for its actual intended purpose, which is to train an AI!
