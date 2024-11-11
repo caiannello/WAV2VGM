@@ -61,10 +61,10 @@ if len(sys.argv)==2:
   wavname = sys.argv[1]
 else:
   # default input file during dev, if no file specified on the commandline.
-  #wavname = 'HAL 9000 - Human Error.wav'
+  wavname = 'HAL 9000 - Human Error.wav'
   #wavname = 'JFK Inaguration.wav'
   #wavname = 'Ghouls and Ghosts - The Village Of Decay.wav'
-  wavname = 'Portal-Still Alive.wav'
+  #wavname = 'Portal-Still Alive.wav'
 infolder = 'input\\'
 outfolder = 'output\\'
 reperfolder = 'repertoire\\'
