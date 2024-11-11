@@ -62,8 +62,9 @@ if len(sys.argv)==2:
 else:
   # default input file during dev, if no file specified on the commandline.
   #wavname = 'HAL 9000 - Human Error.wav'
-  wavname = 'JFK Inaguration.wav'
+  #wavname = 'JFK Inaguration.wav'
   #wavname = 'Ghouls and Ghosts - The Village Of Decay.wav'
+  wavname = 'Portal-Still Alive.wav'
 infolder = 'input\\'
 outfolder = 'output\\'
 reperfolder = 'repertoire\\'
@@ -529,6 +530,11 @@ def getFnumBlock(freq):
   fnum = round(freq*pow(2,19)/fsamp/pow(2,block-1))
   return fnum,block
 # -----------------------------------------------------------------------------
+# inverse of above function
+# -----------------------------------------------------------------------------
+def getFreq(fnum, block):
+  return fnum/(pow(2,19)/fsamp/pow(2,block-1))
+# -----------------------------------------------------------------------------
 # Setup the OPL emulator with the specified register values, generate 4096 
 # audio samples, and return resultant frequency spectrum.
 # -----------------------------------------------------------------------------
@@ -631,21 +637,118 @@ def regDictToFile(regdict):
     sbin = sbin[0:idx]+struct.pack('B',v)+sbin[idx+1:]
   return sbin
 # -----------------------------------------------------------------------------
-# genetic algo calls this to impose a mutation on a genome
+# genetic algo calls this to impose a mutation on a genome (opl register file)
 # -----------------------------------------------------------------------------
 def mutatefcn(regfile):
   global permutable_regidxs
   regdict = regFileToDict(regfile)
-  numchanges = 1
-  if random.randint(0,5) == 0:
-    numchanges = random.randint(2,3)
+
+  ncdist = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,3,3,3,3,4,4,5,6,7]
+  numchanges = random.choice(ncdist)
+
   for c in range(0,numchanges):
-    j = random.randint(0,len(permutable_regidxs)-1)
-    j = permutable_regidxs[j]
-    b = (j>>8)&1
-    r = j&0xff
-    regdict[(b,r)] = random.randint(0,255)
-  return regDictToFile(regdict)
+    j = random.choice(permutable_regidxs)
+    b = (j>>8) & 1      # bank
+    r = j & 0xff        # reg
+    if random.randint(0,5) == 0:  # 20% chance to completely randomize the reg
+      regdict[(b,r)] = random.randint(0,255)
+    else:                         # else do some small shift
+      v = regdict[(b,r)]
+      d = random.randint(0,1)
+      if d==0:
+        d=-1
+      if r==0x04:  # 0x104: six connection sel bits
+        a = random.randint(0,5)
+        v ^= (1<<a)
+      elif r>=0x20 and r<=0x35:
+        m = v & 0b1111
+        m = m + d 
+        if m<0:
+          m=0
+        elif m>15:
+          m=15
+        v = 0b00100000|m
+      elif r>=0x40 and r<=0x55:
+        c = random.randint(0,1)  
+        if c==0:  # ksl - freq atten
+          k = v>>6
+          k=k+d
+          if k<0:
+            k=0
+          elif k>3:
+            k=3
+          v=(v&0b111111)|(k<<6)
+        else:     # tl - total level
+          t = v & 0b111111
+          t+=d
+          if t<0:
+            t=0
+          elif t>0b111111:
+            t=0b111111
+          v = (v&0b11000000) | t
+      elif r>=0xe0 and r<=0xf5:  # waveform
+        v+=d
+        if v>7:  
+          v=7
+        elif v<0:
+          v=0
+      elif (r>=0xa0 and r<=0xa8) or (r>=0xb0 and r<=0xb8):  # f-num: low byte or %00KBBBFF
+        if random.randint(0,3) == 0:  # toggle keyon
+          if r<0xb0:
+            r+=0x10
+          v=v^0b0010000
+        else:    # bump frequency
+          if r<0xb0:
+            ofs = r-0xa0
+          else:
+            ofs = r-0xb0
+          aa = regdict[(b,0xa0+ofs)]
+          bb = regdict[(b,0xb0+ofs)]
+          fnum = aa|((bb&3)<<8)
+          block = (bb>>2)&7
+
+          freq = getFreq(fnum, block)
+          freq +=d
+          if freq<0:
+            freq=0
+          elif freq>OPL3_MAX_FREQ:
+            freq=OPL3_MAX_FREQ
+          fnum,block = getFnumBlock(freq)
+
+          # set both freq regs and keyon and continue
+          regdict[(b,0xa0+ofs)] = fnum&0xff
+          regdict[(b,0xb0+ofs)] = 0b00100000 | ((fnum>>8)&3) | (block<<2)
+          continue
+      elif r>=0xc0 and r<=0xc8:     # 1111FFFC  : feedback, connection sel
+        if random.randint(0,1) == 0:  # bump feedback
+          f=(v>>1)&0b111
+          f+=d
+          if f<0:
+            f=0
+          elif f>7:
+            f=7
+          v=(v&0b11110001) | (f<<1)
+        else:     
+          v=v^1                       # toggle connection sel
+      regdict[(b,r)] = v
+  rf = regDictToFile(regdict)
+  return rf
+# -----------------------------------------------------------------------------
+#one-off setting
+#
+# $104        %00CCCCCC - 2op / 4op selection bits
+#
+# per operator settings
+#
+# $X20...$X35:%0010MMMM - op mult
+# $X40...$X55 %KKTTTTTT - ksl atten, total level
+# $XE0...$XF5 %00000WWW - waveform sel
+#
+# per-channel settings (9*2 channels) -----
+# 
+# $XA0...$XA8 %FFFFFFFF - fnum low
+# $XB0...$XB8 %00KBBBFF - keyon, block, fnum hi
+# $XC0...$XC8 %1111FFFC - feedback, connection set
 # -----------------------------------------------------------------------------
 # repeatedly calls calls the genetic algorithm's generate() method and shows
 # the current best result.
@@ -661,22 +764,34 @@ def improveMatch(roi, ospect, g):
   # y ofs to draw position
   yofs = screen_height//2
 
+  # blank whole bottom half so we can show convengence plor in bottom quarter
+  pygame.draw.rect(screen,(0,0,0),(0,yofs,ww,hh*2))  
+  initfit = None
   lastfit = 0
+  lx = ly = px = py = 0
   for iter in range(0,GENE_MAX_GENERATIONS):    
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  
-        return True    
+        return g.p[0].genome    
     tspect = g.p[0].spect
     if tspect is not None:
       fit = g.p[0].fit
-      print(f'Generation: {iter:3d}, fit:{fit:0.1f}, ',end='')
+      if initfit is None:
+        initfit = fit
+      print(f'Generation: {iter:3d}, fit:{fit:0.9f}, ',end='')
       sys.stdout.flush()
       if fit!=lastfit:
         lastfit=fit
         pygame.draw.rect(screen,(0,0,0),(0,yofs,ww,hh))  
         plotTestSpect(tspect,-115.0,0,gcolor=(255,255,0),yofs=yofs)
         plotTestSpect(ospect,-115.0,0,gcolor=(255,255,255),yofs=yofs)
-        pygame.display.update()
+      px = iter*ww//GENE_MAX_GENERATIONS
+      py = (screen_height-1)-(hh*fit//initfit)
+      if iter>0:
+        pygame.draw.line(screen,(0,255,0),(lx,ly),(px,py))
+      lx=px
+      ly=py
+      pygame.display.update()
     g.generate(mutatefcn)
 
   regfile = g.p[0].genome
@@ -777,94 +892,82 @@ def bruteForce():
   hh = int(screen_height//4)
   slen = len(origspect.spectrogram)
 
-  print('loading thumbnails...')
   try:
     with open(reperfolder+'b_opl3_training_set_thumbs.bin','rb') as f:
+      print('Loading training set thumbnails...')
       thumbs = f.read()
+
+      print(f'Loaded {len(thumbs)//128} thumbs.')
   except:
     print('''
-ABORT. 
-You need to run 'src/make_training_set.py', which takes several hours, 
-to generate the files required by the brute-force experiment.''')
+ABORT.
+
+You need to run 'src/make_training_set.py', to generate the files 
+required by the brute-force experiment.''')
     return
-  print('done.')
+
+  # init intermediate output file of opl3 reg settings for
+  # later conversion to a VGM.
   with open(outfolder+'reg_files.bin','wb') as f:
     pass
-  with open(outfolder+'tweaked_reg_files.bin','wb') as f:
-    pass
-  with open(outfolder+'intermediate.txt','wt') as f:
-    f.write('Brute-forcing  - intermeditate output for file:\n')
-    f.write(wavname+'\n')
-    f.write(f'{slen//2} total frames\n')
-    f.write('frame #  |   dif   |  thumbnail idx\n')
 
-  for roi in range(0,slen,2):  # for each spectrum in orig spectrogram
-    # Check if user wants to close program
-    for event in pygame.event.get():
-      if event.type == pygame.QUIT:  
-        return True
-    # this is the spectrum we want recreate
+  for roi in range(0,slen,2):  # for every other spectrum in orig spectrogram
+
+    # this is the spectrum we want recreate.
     ospect = origspect.spectrogram[roi]
+
+    # convert it to a thumbnail for faster (but fuzzier) searching
     othumb = spectThumbnail(ospect)
-    mindif = 999999999
-    best_tpos = 0
-    # check every thumbnail for fitness, and
-    # keep N best ones as starting population for genetic algorithm    
+
+    # Init an empty population for the genetic algorithm, noting the 
+    # spectrum we want to converge to.
     g = gene.gene(500, ospect)
 
+    # compare ospect to each thumbnail in the training set
+    mindif = 999999999
+    best_tpos = 0
     for tpos in range(0,len(thumbs),128):
       tthumb = thumbs[tpos:tpos+128]
-      dif = thumbDif(tthumb,othumb)
-      g.add(tpos//128, dif)
-      if dif<mindif:
+      dif = thumbDif(tthumb,othumb)       # get its rough fitness value.
+      g.add(tpos//128, dif)               # maybe include in gene pool if it's fit enough
+      if dif<mindif:                          # If it's the best search result so far:
         mindif=dif
         best_tpos = tpos        
-        pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
-        plotTestSpect(ospect,-115.0,0)     
-        #plotThumb(othumb) 
-        plotThumb(tthumb) 
+        pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))  # draw it along top of screen,
+        plotTestSpect(ospect,-115.0,0)                # overlaid on the original spectrum
+        plotThumb(tthumb)                             # as min/max bars in red/green.
         pygame.display.update()
-        print(f'bruteForce(): frame: {roi:6d}, dif: {dif:0.1f}, thumbidx: {best_tpos//128}')
-    # plot our best match just below the working area
+        # print search progress
+        print(f'bruteForce(): frame: {roi//2:6d}/{slen//2}, dif: {dif:0.1f}, thumbidx: {best_tpos//128}')
+        # Check if user is a quitter
+        for event in pygame.event.get():
+          if event.type == pygame.QUIT:  
+            return True    
+
+    # plot our best search result below the working area.
     pygame.draw.rect(screen,(0,0,0),(0,0+hh,ww,hh))
     plotTestSpect(ospect,-115.0,0,yofs=hh)     
     tthumb = thumbs[best_tpos:best_tpos+128]
     plotThumb(tthumb,hh) 
     pygame.display.update()
-    # append metadata about the best match to an intermediate text
-    # file for later gradient-descent, annealing, tweaking, thoughts and 
-    # prayers, etc..? (hopefully gonna work?)
-    with open(outfolder+'intermediate.txt','at') as f:
-      f.write(f'{roi} {mindif} {best_tpos//128}\n')
-    # also, for the same reason, get the opl register settings associated 
-    # with that best match, and append to a separate binary file.
 
-    # keep a rolling buf of the last N best matches as a starting population
-    # for a genetic algorithm.
-    with open(outfolder+'reg_files.bin','ab') as f:
-      with open(reperfolder+'b_opl3_training_set.bin','rb') as ifile:
-        # pos in big file of reg settings matching the found thumbnail
-        regpos = (best_tpos//128)*(2048+512)
-        ifile.seek(regpos) # get reg cfg associated with closest match
-        regfile = ifile.read(512)
-        for gm in g.p:
-          regpos = (gm.id*2048+512)
-          ifile.seek(regpos) # get reg cfg associated with closest match
-          gm.genome = ifile.read(512)
-      f.write(regfile)
-    # Do an annealing gradient descent on these register settings to 
-    # try to improve the result. Output new settings to another intermediate
-    # file and also append to a VGM output file.
-    # opl settings will be individually tweaked, in the following order, 
-    # up/down in small increments for as long as improvement is observed. 
-    # If no further improvement is seen, we move onto the next setting and 
-    # try again.
+    # Of the N best matches we found, lookup the associated OPL3 regoster
+    # configurations from the big training file, and set them as the
+    # genomes of the matches.
+    with open(reperfolder+'b_opl3_training_set.bin','rb') as ifile:
+      for gm in g.p:
+        filepos_regs = (gm.id*2048+512)  # thumb_index * (2048 + 512)
+        ifile.seek(filepos_regs)         
+        gm.genome = ifile.read(512)  # genome is 512 bytes, some unused.
+
+    # Do a genetic annealing process on the register settings to try 
+    # to improve the result. 
     g.setInitialFitness(fitfunc)
-    #for gm in g.p:
-    #  print(gm.id, gm.fit)
-
     regfile = improveMatch(roi, ospect, g)
-    with open(outfolder+'tweaked_reg_files.bin','ab') as f:
+
+    # Output our best register file result to intermediate file, 
+    # for later conversion to VGM. (todo)
+    with open(outfolder+'reg_files.bin','ab') as f:
       f.write(regfile)
 # -----------------------------------------------------------------------------
 # Make sequence to init the OPL3 chip.

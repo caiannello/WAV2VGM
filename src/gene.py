@@ -67,14 +67,16 @@ class gene:
 		self.p = self.p[0:splitpoint]
 		mutants = 0
 		for i in range(splitpoint, self.p_max):
-			a = random.randint(0,splitpoint-1)
+			a = random.randint(0,splitpoint-1)  # parents
 			ga = self.p[a].genome
 			b = random.randint(0,splitpoint-1)
 			gb = self.p[b].genome
-			cp = random.randint(0,511)
-			gm = gmemb(0,0)			
+			gm = gmemb(0,0)			            # child
+			
+			cp = random.randint(0,511)          # single-point crossover
 			gm.genome = ga[0:cp] + gb[cp:]
-			if random.randint(0,20) == 0:
+
+			if random.randint(0,11) == 0:
 				mutants+=1
 				gm.genome = mutatefcn(gm.genome)
 			gm.fit, gm.spect = self.fitfunc(self.ideal, gm.genome)
