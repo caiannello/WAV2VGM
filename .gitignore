@@ -7,3 +7,8 @@ src/__pycache__/spect.cpython-313.pyc
 repertoire/opl3_training_set.bin
 repertoire/opl3_training_set_thumbs.bin
 gpt_ai_answer.txt
+output/intermediate.txt
+output/reg_files.bin
+output/tweaked_reg_files.bin
+repertoire/b_opl3_training_set.bin
+repertoire/b_opl3_training_set_thumbs.bin

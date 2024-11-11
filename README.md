@@ -19,7 +19,7 @@ Directory Content:
   doc -                 Currently just some screenshots
   input -               Some same wave files to use as input
   output -              Those waves, converted to OPL3, as VGM and MP3 file
-  repertoire -          WIP experimental stuff
+  repertoire -          WIP crazy experimental stuff
   src -                 Project source code
   WAV2VGM.py -          Main executable
 
@@ -94,6 +94,19 @@ following (lowercase) keys:
 
   Or close the window to quit.
 
+  EXPERIMENTAL STUFF
+
+  b - Brute-forces OPL config per each frame of the spectrugram. THIS TAKES HOURS, and the
+      output files aren't yet in VGM format! Also, this experiment requires a "training set"
+      to be generated beforehand, using 'src/make_training_set.py', which also takes hours!
+      
+      The usefulness of the training set for this purpose is dubious as best, since the
+      the matches get further refined using a genetic algorithm, which is always fun, so
+      maybe can just trart with random-everything and skip the search step before doing
+      the genetic stuff.
+
+      TODO: Use training set for its actual intended purpose, which is to train an AI!
+
 ```
   Clicking on the displayed spectrogram sets some cursors, but these don't yet 
   do anything useful and might even crash the app, but kinda fun to play with.
@@ -114,7 +127,7 @@ There is much room for improvement in this project.
 
   - The quality of the output could be HUGELY BETTER: The resynthesis method currently 
     only contains pure sine waves (1-operator, basically), rather than any of the advanced
-    features offered in OPL3 juch as 2-op, 4-op, percussion modes, waveforms besides sine,
+    features offered in OPL3 such as 2-op, 4-op, percussion modes, waveforms besides sine,
     volume envelopes, vibrato, tremolo, etc.
 
   - It would be super easy to add OPL2 support, since it's nearly the same except

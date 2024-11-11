@@ -5,14 +5,13 @@
 # a short waveform using the OPL3 emulator, and then get the frequerncy 
 # spectrum of it. These are both output to a big data file.
 #
-# That plan is to use this file to train a deep-learning algorithm to
+# The plan is to use this file to train a deep-learning algorithm to
 # output OPL configuration data in response to arbitrary input spectra.
 #
 # Hopefully, the permutations chosen have good enough coverage of that the
 # OPL3 chip can do. We're not using volume envelopes, vibrato, or tremolo 
 # though, since we currently only care about one output spectrum per 
 # permutation.
-#
 #
 # Craig Iannello 2024/11/04
 #
@@ -398,7 +397,7 @@ def main():
             if fszmb!=lastszmb: # every 1MB out, show a status update.
               lastszmb = fszmb
               sfsz = f'({fszmb:d} MB),'
-              print(f'iter: {iters:12d} {sfsz:<16} rawbin max:{rawbin_high:5d}, dBFS min/max:({dbin_low:4d},{dbin_high:4d}), wav bounds:({wave_low:6d},{wave_high:6d})')
+              print(f'iter: {iters:12d} {sfsz:<16} rawbin max:{rawbin_high:5d}, dBFS min/max:({dbin_low:4d},{dbin_high:4d}), wav min/max:({wave_low:6d},{wave_high:6d})')
               if fszmb >= 20000:  # if we hit 20 GB, stop!
                 sfile.close()
                 exit()
