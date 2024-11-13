@@ -18,7 +18,7 @@ Work is underway to leverage neural networks to produce more sophisticated
 synthesizer configurations for a given input: Code is provided to produce 
 training sets (random OPL3 register settings and resulting spectra), and 
 to train the AI model from these data. This isn't yet sounding even
-remotely right, yet. (Still learning the AI ropes.)
+remotely close, yet. (Still learning the AI ropes.)
 
 Directory Content:
   
