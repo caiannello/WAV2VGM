@@ -126,7 +126,13 @@ following (lowercase) keys:
 
 ## Notes
 
-There is much room for improvement in this project. 
+  - The spectrogram is made by slicing the input wave into 4096 byte samples, 
+    with 32-samples of overlap per slice. Each spectrum is 2048-bins spanning a 
+    frequency range of 0Hz to 22050 Hz, at about 10.8 Hz per bin. The frequency
+    range shown on screen scaled up by three though, from 0Hz (bottom) to
+    7350 Hz (top).
+    
+There is much room for improvement in this project:
 
   - The code is quite disorganized and slow, and the user interface is sparse
     and unintuitive. 
@@ -136,11 +142,6 @@ There is much room for improvement in this project.
     counts.
 
   - There should be some settings to tweak to affect the conversion.
-
-  - The spectrogram is made by slicing the input wave into 4096 byte samples, 
-    with 32-samples of overlap per slice. Each spectrum is 2048-bins spanning a 
-    frequency range of 0Hz to 22050 Hz, at about 10.8 Hz per bin. The frequency
-    range shown on screen is 1/3 of this, from 0Hz (bottom) to 7350 Hz (top). 
 
   - The output files are larger than they really need to be. (Redundancy in
     the instructions sent to the OPL3, e.g. the same frequency being set 
