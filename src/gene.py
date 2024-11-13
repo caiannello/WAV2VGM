@@ -9,10 +9,11 @@ class gmemb:
 	fit = 9999999
 	genome = None
 	spect = None
-	def __init__(self,id,fit):
+	def __init__(self,id,fit,spect=None,genome=None):
 		self.id = id
 		self.fit = fit
-		self.genome = None
+		self.spect = spect
+		self.genome = genome
 	def __str__(self):
 		return f'{self.id=} {self.fit=} {self.genome=}'
 
@@ -24,13 +25,14 @@ class gene:
 	fbest = 999999999
 	fworst = -999999999
 	fitfunc = None
-	def __init__(self, p_max=500, ideal=None):
+	def __init__(self, p_max=500, ideal=None, fitfunc=None):
 		self.p_max = p_max	
 		self.ideal = ideal
+		self.fitfunc = fitfunc
 
-	def add(self, id, fit):  # fitness: lower is better
+	def add(self, id, fit, spect=None, genome=None):  # fitness: lower is better
 		if self.p_ct < self.p_max:
-			gm = gmemb(id,fit)
+			gm = gmemb(id,fit,spect,genome)
 			self.p.append(gm)
 			if fit<self.fbest:
 				self.fbest=fit
@@ -38,21 +40,13 @@ class gene:
 				self.fworst=fit
 			self.p_ct+=1
 		elif fit < self.fworst:
-			gm = gmemb(id,fit)
+			gm = gmemb(id,fit,spect,genome)
 			self.p.append(gm)
 			self.p.sort(key=lambda m: m.fit)
 			self.p = self.p[0:-1]
 			self.p_ct = self.p_max
 			self.fbest = self.p[0].fit 
 			self.fworst = self.p[-1].fit 
-
-	def setInitialFitness(self, fitfunc):
-		print('Doing inital fitness assessment...')
-		self.fitfunc = fitfunc
-		for gm in self.p:
-			gm.fit, gm.spect = self.fitfunc(self.ideal, gm.genome)
-		self.p.sort(key=lambda m: m.fit)
-		print('done')
 
 	# replace the worst half (or more) with new offspring
 	# though crossover and ocassionally, mutation.
@@ -71,16 +65,13 @@ class gene:
 			ga = self.p[a].genome
 			b = random.randint(0,splitpoint-1)
 			gb = self.p[b].genome
-			gm = gmemb(0,0)			            # child
-			
 			cp = random.randint(0,511)          # single-point crossover
-			gm.genome = ga[0:cp] + gb[cp:]
-
+			genome = ga[0:cp] + gb[cp:]
 			if random.randint(0,11) == 0:
 				mutants+=1
-				gm.genome = mutatefcn(gm.genome)
-			gm.fit, gm.spect = self.fitfunc(self.ideal, gm.genome)
-			self.p.append(gm)
+				genome = mutatefcn(genome)
+			fit, spect = self.fitfunc(self.ideal, genome)
+			self.p.append(gmemb(i,fit,spect,genome))  # child
 		self.p.sort(key=lambda m: m.fit)
 		print(f'split:{splitpoint:3d}, mutants:{mutants}')
 

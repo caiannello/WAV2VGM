@@ -21,6 +21,11 @@ from src import spect as sp
 from src import opl_emu as opl
 from src import gene
 
+import numpy as np
+import torch
+import torch.nn as nn  
+
+
 import struct
 import gzip
 import sys
@@ -34,7 +39,6 @@ from copy import deepcopy
 # randomize the PRNG
 random.seed(datetime.datetime.now().timestamp())
 # -----------------------------------------------------------------------------
-# TODO:  Make a bunch of this stuff user-configurable!
 screen_width=1920 
 screen_height=1080
 origspect=None
@@ -46,9 +50,7 @@ OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to a voice (fnum, block)
 SPECT_VERT_SCALE = 3  # set max vert spect axis to 7350 Hz max rather than the orig 22050 Hz  
 
 GENE_MAX_GENERATIONS = 500
-# min/max when plotting spectrum thumbnail bins onscreen
-MAX_DB = 0
-MIN_DB = -115.0        
+
 # -----------------------------------------------------------------------------
 pygame.init()
 try:
@@ -67,7 +69,7 @@ else:
   #wavname = 'Portal-Still Alive.wav'
 infolder = 'input\\'
 outfolder = 'output\\'
-reperfolder = 'repertoire\\'
+
 vpath = outfolder+wavname[0:-3]+"vgz"
 origspect = sp.spect(wav_filename='input\\'+wavname,nperseg=4096,quiet=False,clip=False)
 clock = pygame.time.Clock()
@@ -120,20 +122,6 @@ def drawSpect(spect = None, xx=0,yy=0,ww=screen_width,hh=screen_height):
     else:
       pygame.draw.line(screen, (192,192,192), (scr_x,hh-T_AXIS_HEIGHT+1),(scr_x,hh-T_AXIS_HEIGHT+3))
     t+=secs_per_t_tick
-  '''
-  # draw vertical gridlines at SLICE_FREQ intervals
-  tstart = 0
-  t = tstart
-  specdrawheight = screen_height-T_AXIS_HEIGHT
-  while t<(tstart+onscreen_dur):
-    scr_x = int((t-tstart)*screen_width/(tstart+onscreen_dur)) 
-    q=0
-    for y in range(0,specdrawheight,2): 
-      if q&1:
-        pygame.draw.line(screen, (0,0,0), (scr_x,y-1),(scr_x,y))
-      q+=1
-    t+=1/SLICE_FREQ
-  '''
   # highlight selected spectrum on spectrogram (dotted)
   if roi>=0:
     scr_x = int(roi*screen_width/spect.maxrowidx)      
@@ -535,6 +523,13 @@ def getFnumBlock(freq):
 def getFreq(fnum, block):
   return fnum/(pow(2,19)/fsamp/pow(2,block-1))
 # -----------------------------------------------------------------------------
+def showRegDict(opl_reg_dict):
+    keys = list(opl_reg_dict.keys())
+    keys.sort()
+    for (b,r) in keys:
+      v = opl_reg_dict[(b,r)]
+      print(f'    {b},${r:02X} : ${v:02X}')  
+# -----------------------------------------------------------------------------
 # Setup the OPL emulator with the specified register values, generate 4096 
 # audio samples, and return resultant frequency spectrum.
 # -----------------------------------------------------------------------------
@@ -556,6 +551,7 @@ def renderOPLFrame(opl_reg_dict):
     newspect = sp.spect(wav_filename = None, sample_rate=44100,samples=w,nperseg=4096, quiet=True)
   else:
     newspect  = None
+    #showRegDict(opl_reg_dict)
   return newspect
 # -----------------------------------------------------------------------------
 # $001        %00100000
@@ -582,51 +578,203 @@ def renderOPLFrame(opl_reg_dict):
 # -----------------------------------------------------------------------------
 # regfile indexes [0...512) known to have a function in OPL3
 # -----------------------------------------------------------------------------
-known_opl_regidxs = [0x001,0x105,0x008,0x0BD,0x104]
 permutable_regidxs = [0x104]
+
+permutable_splits = { 0x104:[('_','00'),('4o0',1),('4o1',1),('4o2',1),('4o3',1),('4o4',1),('4o5',1)]}
+
 for i in range(0,0x16):
-  known_opl_regidxs.append(0x020+i)
-  known_opl_regidxs.append(0x120+i)
-  known_opl_regidxs.append(0x040+i)
-  known_opl_regidxs.append(0x140+i)
-  known_opl_regidxs.append(0x060+i)
-  known_opl_regidxs.append(0x160+i)
-  known_opl_regidxs.append(0x080+i)
-  known_opl_regidxs.append(0x180+i)
-  known_opl_regidxs.append(0x0E0+i)
-  known_opl_regidxs.append(0x1E0+i)
-  
   permutable_regidxs.append(0x020+i)
+  permutable_splits[0x020+i] = [('_',"0010"),('OMulA',4)]
   permutable_regidxs.append(0x120+i)
+  permutable_splits[0x120+i] = [('_',"0010"),('OMulB',4)]
   permutable_regidxs.append(0x040+i)
+  permutable_splits[0x040+i] = [('KSLA',2),('TlvA',6)]
   permutable_regidxs.append(0x140+i)
+  permutable_splits[0x140+i] = [('KSLB',2),('TlvB',6)]
   permutable_regidxs.append(0x0E0+i)
+  permutable_splits[0x0E0+i] = [('_',"00000"),('WavA',3)]
   permutable_regidxs.append(0x1E0+i)
+  permutable_splits[0x1E0+i] = [('_',"00000"),('WavB',3)]
 
 for i in range(0,0x09):
-  known_opl_regidxs.append(0x0A0+i)
-  known_opl_regidxs.append(0x1A0+i)
-  known_opl_regidxs.append(0x0B0+i)
-  known_opl_regidxs.append(0x1B0+i)
-  known_opl_regidxs.append(0x0C0+i)
-  known_opl_regidxs.append(0x1C0+i)
-
   permutable_regidxs.append(0x0A0+i)
+  permutable_splits[0x0A0+i] = [('FnLA',8)]
+
   permutable_regidxs.append(0x1A0+i)
+  permutable_splits[0x1A0+i] = [('FnLB',8)]
+
   permutable_regidxs.append(0x0B0+i)
+  permutable_splits[0x0B0+i] = [('_',"00"),('KonA',1),('BlkA',3),('FnHA',2)]
+
   permutable_regidxs.append(0x1B0+i)
+  permutable_splits[0x1B0+i] = [('_',"00"),('KonB',1),('BlkB',3),('FnHB',2)]
+
   permutable_regidxs.append(0x0C0+i)
+  permutable_splits[0x0C0+i] = [('_',"1111"),('FbA',3),('CcB',1)]
+
   permutable_regidxs.append(0x1C0+i)
+  permutable_splits[0x1C0+i] = [('_',"1111"),('FbB',3),('CcB',1)]
+
+permutable_regidxs.sort()
+
+permute_counts = {}
+for i,ridx in enumerate(permutable_regidxs):  
+  b = (ridx>>8)&1
+  r = ridx&0xff
+  for si,(ll,bb) in enumerate(permutable_splits[ridx]):
+    if ll!='_':
+      permute_counts[(b,r,si)] = 0
+
+# -----------------------------------------------------------------------------
+# resets the opl configuration to just the fixed-value parts
+# -----------------------------------------------------------------------------
+def initRegs():
+  opl_regs = { (0,0x01): 0x20, (1,0x05): 0x01, (0,0x08): 0x00, (0,0xBD): 0, (1,0x04):0 }
+  for b in range(0,2):
+    for j in range(0,0x16):
+      opl_regs[(b,j+0x20)] = 0x20
+      opl_regs[(b,j+0x40)] = 0x20
+      opl_regs[(b,j+0x60)] = 0xff
+      opl_regs[(b,j+0x80)] = 0x0f
+      opl_regs[(b,j+0xe0)] = 0x00
+    for j in range(0,0x9):
+      opl_regs[(b,j+0xA0)] = 0x00
+      opl_regs[(b,j+0xB0)] = 0x00
+      opl_regs[(b,j+0xC0)] = 0xf0   
+  return opl_regs
+
+# $001        %00100000
+# $105        %00000001
+# $008        %00000000
+# $0BD        %00000000 - percussion currently unused
+# $X60...$X75 %11111111 - ADSR stuff, currently fixed to be always-on.
+# $X80...$X95 %00001111 - 
+#
+# $104        %00CCCCCC - 2op / 4op selection bits
+#
+# per-operator settings (22*2 operators) ------
+#
+# $X20...$X35:%0010MMMM 
+# $X40...$X55 %KKTTTTTT - ksl atten, total level
+# $XE0...$XF5 %00000WWW - waveform sel
+#
+# per-channel settings (9*2 channels) -----
+# 
+# $XA0...$XA8 %FFFFFFFF - fnum low
+# $XB0...$XB8 %00KBBBFF - keyon, block, fnum hi
+# $XC0...$XC8 %1111FFFC - feedback, connection set  
+# -----------------------------------------------------------------------------
+# given a byte value, start bit idx [0,7] and end bit idx [0,7]
+# extracts the bit string from byte b and converts it to a float mag [0.0,1.0]
+# -----------------------------------------------------------------------------
+def getBitField(v,lbl,sb,eb):
+  slen = sb-eb
+  mag = (1<<slen)-1
+  v = (v<<(8-sb)) & 0xff
+  v = (v>>(8-slen))
+  r = float(v)/float(mag)
+  #print(f'{lbl=}: {v=} {r=:5.2f}')
+  return r
+
+# -----------------------------------------------------------------------------
+# convert an opl congiguration dict into a vector representation like what was
+# used to training the AI. (Each field gets a float [0.0,1.0] in the vector)
+# -----------------------------------------------------------------------------
+def regDictToVect(opl_regs):
+  global permutable_regidxs, permutable_splits
+  permarray = []
+  for i,ridx in enumerate(permutable_regidxs):
+    b = (ridx>>8) & 1
+    r = ridx & 0xff
+    v = 0
+    if (b,r) in opl_regs:
+      v = opl_regs[(b,r)]
+    sbit = 8
+    for (lbl,bts) in permutable_splits[ridx]:
+      if lbl == '_':
+        sbit-=len(bts)
+      else:
+        ebit = sbit-bts
+        permarray.append(getBitField(v,lbl,sbit,ebit))
+        sbit = ebit
+  return permarray
+# -----------------------------------------------------------------------------
+# convert a float configuration vector into a configuration dictionary
+# -----------------------------------------------------------------------------
+def intToBits(v,nbit):
+  bs = bin(v)[2:]
+  pbs = '0'*(nbit-len(bs))+bs
+  #print(f'      intToBits({v=},{nbit=}): {bs=} {pbs=}')
+  return pbs
+
+def bitsToInt(bs):
+  return int(bs,2)
+
+def insBitsFloat(v,lbl,sbit,nbit,f):
+  #if 'Kon' in lbl:
+  #  print(f'      insBitsFloat({v=},{lbl=},{sbit=},{nbit=},{f=:5.2f}): ',end='')
+  orig = intToBits(v,8)
+  if nbit>1:  
+    mag = (1<<nbit)-1
+    newv = intToBits(round(f*mag),nbit)
+  else:
+    mag = 1
+    newv="0"
+    if f >= 0.45:
+      newv = "1"
+  a = 8-sbit
+  b = a+nbit
+  bs = orig[0:a] + newv[-nbit:] + orig[b:]
+  i = bitsToInt(bs)
+  #if 'Kon' in lbl:
+  #  print(f'{mag=} origv=%{orig} newv=%{newv} {a=} {b=} {bs=} {i=}')
+  return i
+
+def insBitsString(v,sbit,nbit,s):
+  mag = (1<<nbit)-1
+  f = int(s,2)/mag
+  #print(f'      insBitsString({v=},{sbit=},{nbit=},{s=}): {mag=} {f=}')
+  return insBitsFloat(v,'_',sbit,nbit,f)
+
+def vectToRegDict(vec):
+  global permutable_regidxs, permutable_splits
+  regs = initRegs()
+  j=0
+  for i,ridx in enumerate(permutable_regidxs):
+    b = (ridx>>8) & 1
+    r = ridx & 0xff
+    #print(f'vectToRegDict(): ({b},${r:01X}) ',end='')
+    if not (b,r) in regs:
+      regs[(b,r)]=0x00
+      print('(created)')
+    #else:
+    #  print()
+
+    v = 0x00
+    sbit = 8
+    for (lbl,bts) in permutable_splits[ridx]:
+      #print(f'    ({lbl=}:{bts=}):')
+      if lbl == '_':
+        v=insBitsString(v,sbit,len(bts),bts)
+        regs[(b,r)]=v
+        sbit-=len(bts)
+      else:
+        ebit = sbit-bts
+        f = vec[j]
+        j+=1
+        v=insBitsFloat(v,lbl,sbit,sbit-ebit,f)
+        regs[(b,r)]=v
+        sbit = ebit
+
+  return regs
 
 # -----------------------------------------------------------------------------
 def regFileToDict(regfile):
-  global known_opl_regidxs
   regdict = {}
   for i,v in enumerate(regfile):
-    if i in known_opl_regidxs:      
-      b = (i>>8)&1
-      r = i&0xff
-      regdict[(b,r)]=v
+    b = (i>>8)&1
+    r = i&0xff
+    regdict[(b,r)]=v
   return regdict
 # -----------------------------------------------------------------------------
 def regDictToFile(regdict):
@@ -634,7 +782,11 @@ def regDictToFile(regdict):
   for (b,r) in regdict:
     v = regdict[(b,r)]
     idx = b*256 + r
-    sbin = sbin[0:idx]+struct.pack('B',v)+sbin[idx+1:]
+    try:
+      sbin = sbin[0:idx]+struct.pack('B',v)+sbin[idx+1:]
+    except:
+      print(f'{b=} {r=:02X} {v=}')
+      exit()
   return sbin
 # -----------------------------------------------------------------------------
 # genetic algo calls this to impose a mutation on a genome (opl register file)
@@ -769,6 +921,7 @@ def improveMatch(roi, ospect, g):
   initfit = None
   lastfit = 0
   lx = ly = px = py = 0
+  tstart = time.time()
   for iter in range(0,GENE_MAX_GENERATIONS):    
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  
@@ -778,7 +931,10 @@ def improveMatch(roi, ospect, g):
       fit = g.p[0].fit
       if initfit is None:
         initfit = fit
-      print(f'Generation: {iter:3d}, fit:{fit:0.9f}, ',end='')
+      tnow = time.time()
+      tdelt = tnow-tstart
+      tstart = tnow
+      print(f'Generation: {iter:3d}, fit:{fit:0.9f}, tdelt:{tdelt:0.2f} ',end='')
       sys.stdout.flush()
       if fit!=lastfit:
         lastfit=fit
@@ -814,76 +970,54 @@ def fitfunc(ospect,regfile):
     dif += a*a
   return math.sqrt(dif), tspect
 # -----------------------------------------------------------------------------
-def thumbDif(ttest, torig):
-  l = len(torig)
-  dif = 0
-  for i in range(0,64,2):    
-    tmin,tmax = struct.unpack('BB',ttest[i:i+2])
-    if tmin<-115:
-      tmin = -115
-    omin,omax = struct.unpack('BB',torig[i:i+2])  # (min, max)    
-    a = omin-tmin
-    b = omax-tmax
-    dif += a*a + b*b
-  return dif
+# WIP EXPERIMENT- Try to use a neural network to find the best OPL3 settings
+# for each frame of the spectrogram.
 # -----------------------------------------------------------------------------
-# show min/max lines for every 32 bins of spectrum
-# -----------------------------------------------------------------------------
-def plotThumb(t,yofs=0):
-  global screen
-  global MIN_DB,MAX_DB
-  global screen_width,screen_height
-  ww=screen_width
-  hh =screen_height//4 
-  l = len(t)
-  hsr = 22050
-  if MIN_DB==MAX_DB:  # dont wanna /0
-    return
-  # draw single spectrum 
-  for i in range(0,l,2):
-    x0=int(i*ww/l)
-    x1=int((i+2)*ww/l)
-    a,b = struct.unpack('BB',t[i:i+2])
-    a = -a
-    b = -b
-    if a<-115:
-      a=-115
-    v0=int((a-MIN_DB)*hh/(MAX_DB-MIN_DB))
-    y0=hh-1-v0
-    if y0>=0 and y0<hh:
-      pygame.draw.line(screen, (128,255,128), (x0,y0+yofs),(x1,y0+yofs))
 
-    v1=int((b-MIN_DB)*hh/(MAX_DB-MIN_DB))
-    y1=hh-1-v1
-    if y1>=0 and y1<hh:
-      pygame.draw.line(screen, (255,128,128), (x0,y1+yofs),(x1,y1+yofs))  
+# TODO: this is duplicated in the training code. We should
+# make a shared model-definition file!
+
+class Model(nn.Module):
+    def __init__(self):
+        super(Model, self).__init__()        
+        # Convolutional layers
+        self.conv_layers = nn.Sequential(
+            nn.Conv1d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(),
+            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=2),
+            nn.ReLU()
+        )        
+        # Fully connected layers
+        self.model = nn.Sequential(
+            nn.Linear(32 * 2048, 2048),  # Adjusted input size for flattened Conv1d output
+            nn.BatchNorm1d(2048),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(2048, 4096),
+            nn.BatchNorm1d(4096),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(4096, 2048),
+            nn.BatchNorm1d(2048),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(2048, 1024),
+            nn.BatchNorm1d(1024),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(1024, 290)
+        )
+    def forward(self, x):
+        x = x.unsqueeze(1)  # Shape becomes [batch_size, 1, 2048]        
+        x = self.conv_layers(x)        
+        x = x.view(x.size(0), -1)  # Shape becomes [batch_size, 32 * 2048]        
+        x = self.model(x)        
+        return x
 # -----------------------------------------------------------------------------
-def spectThumbnail(spect):
-  thumb = b''
-  for bidx in range(0,2048,2048//64):
-    i = abs(int(min(spect[bidx:bidx+2048//64])))
-    x = abs(int(max(spect[bidx:bidx+2048//64])))
-    if i>255:
-      i=255
-    if x>255:
-      x=255
-    thumb+=struct.pack('BB',i,x)
-  return thumb
+# Code to brute-force a solution using either a (slow) genetic algorithm or a 
+# convolutional neural-network.
 # -----------------------------------------------------------------------------
-# WIP EXPERIMENT- Try to brute-force the best OPL3 settings for each frame 
-# of the spectrogram.
-#
-# The current method searches through the entire AI training set to find 
-# the closest match per frame. These 'matches' are pretty rough, so they are
-# output to an 'intermediate file' for later processing, where we will tweak
-# the opl settings per frame, in small increments, for as long as we're able
-# to improve the result. 
-#
-# Even just the initial search is unfeasibly slow, but we're doing this for
-# Science! (That, and I'm procrastinating on learning how to build/train the
-# AI.)
-# -----------------------------------------------------------------------------
-def bruteForce():
+def bruteForce(genetic = False, ai = True):
   global origspect
   global screen
   global screen_width
@@ -892,82 +1026,87 @@ def bruteForce():
   hh = int(screen_height//4)
   slen = len(origspect.spectrogram)
 
-  try:
-    with open(reperfolder+'b_opl3_training_set_thumbs.bin','rb') as f:
-      print('Loading training set thumbnails...')
-      thumbs = f.read()
-
-      print(f'Loaded {len(thumbs)//128} thumbs.')
-  except:
-    print('''
-ABORT.
-
-You need to run 'src/make_training_set.py', to generate the files 
-required by the brute-force experiment.''')
-    return
+  if ai:
+    model = Model()
+    model.load_state_dict(torch.load('models/torch_model.pth'))
+    model.eval()  # Set the model to evaluation mode
 
   # init intermediate output file of opl3 reg settings for
-  # later conversion to a VGM.
+  # later conversion to a VGM. (TODO!)
   with open(outfolder+'reg_files.bin','wb') as f:
     pass
 
-  for roi in range(0,slen,2):  # for every other spectrum in orig spectrogram
+  # brute-force loop: -----
+  # for every-other spectrum in original spectrogram:
+  for roi in range(0,slen,2): 
+
+    # check if user is a quitter
+    for event in pygame.event.get():
+      if event.type == pygame.QUIT:
+        return
 
     # this is the spectrum we want recreate.
     ospect = origspect.spectrogram[roi]
 
-    # convert it to a thumbnail for faster (but fuzzier) searching
-    othumb = spectThumbnail(ospect)
+    # NEURAL NETWORK FUN ------------------
+    if ai:    
+      # reformat the original spectrum to 
+      # an input vector for the inferencer
+      inp = []
+      for i,b in enumerate(ospect[0:-1]):
+        o = abs(int(b))
+        if o>255:
+          o=255
+        o = 255-o
+        inp.append(float(o)/255.0)  
+      # Shape becomes (1, 2048)
+      sample_input = torch.tensor(inp, dtype=torch.float32).reshape(1, 2048)
+      # Disable gradient calculation for inference
+      with torch.no_grad():
+          predicted_output = model(sample_input)
+      # make prediction
+      predicted_output = predicted_output.numpy().flatten()
+      # convert output cfg vector to an opl3 register dictionary    
+      regdict = vectToRegDict(predicted_output)
+    # -------------------------------------
 
-    # Init an empty population for the genetic algorithm, noting the 
-    # spectrum we want to converge to.
-    g = gene.gene(500, ospect)
+    # GENETIC ALGORITHM FUN ---------------
+    if genetic:
+      # Init an empty population for the genetic algorithm,
+      # noting the spectrum we hope to achieve.
+      print('Making initial population')
+      g = gene.gene(1000, ospect, fitfunc)
+      for i in range(0,1000):
+        opl_regs = initRegs()
+        for i in permutable_regidxs:
+          b = (i>>8)&1
+          r = i&0xff
+          opl_regs[(b,r)] = random.randint(0,255)
+        genome = regDictToFile(opl_regs)
+        fit, spect = fitfunc(ospect, genome)    
+        g.add(i, fit, spect, genome)
+      print('ok')
+      # Do a (slow) genetic annealing process to
+      # try to improve the result. 
+      regfile = improveMatch(roi, ospect, g)
+    # -------------------------------------
 
-    # compare ospect to each thumbnail in the training set
-    mindif = 999999999
-    best_tpos = 0
-    for tpos in range(0,len(thumbs),128):
-      tthumb = thumbs[tpos:tpos+128]
-      dif = thumbDif(tthumb,othumb)       # get its rough fitness value.
-      g.add(tpos//128, dif)               # maybe include in gene pool if it's fit enough
-      if dif<mindif:                          # If it's the best search result so far:
-        mindif=dif
-        best_tpos = tpos        
-        pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))  # draw it along top of screen,
-        plotTestSpect(ospect,-115.0,0)                # overlaid on the original spectrum
-        plotThumb(tthumb)                             # as min/max bars in red/green.
-        pygame.display.update()
-        # print search progress
-        print(f'bruteForce(): frame: {roi//2:6d}/{slen//2}, dif: {dif:0.1f}, thumbidx: {best_tpos//128}')
-        # Check if user is a quitter
-        for event in pygame.event.get():
-          if event.type == pygame.QUIT:  
-            return True    
+    # give register cfg to opl3 emulator and render a spectrum
+    tspect = renderOPLFrame(regdict)
 
-    # plot our best search result below the working area.
-    pygame.draw.rect(screen,(0,0,0),(0,0+hh,ww,hh))
-    plotTestSpect(ospect,-115.0,0,yofs=hh)     
-    tthumb = thumbs[best_tpos:best_tpos+128]
-    plotThumb(tthumb,hh) 
+    pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
+    plotTestSpect(ospect,-115,0,(255,255,255))   # plot original spect
+
+    if tspect is not None: 
+      tspect = tspect.spectrogram[0]
+      plotTestSpect(tspect,-115,0,(255,255,0))   # plot spect from predicted config
+    
     pygame.display.update()
 
-    # Of the N best matches we found, lookup the associated OPL3 regoster
-    # configurations from the big training file, and set them as the
-    # genomes of the matches.
-    with open(reperfolder+'b_opl3_training_set.bin','rb') as ifile:
-      for gm in g.p:
-        filepos_regs = (gm.id*2048+512)  # thumb_index * (2048 + 512)
-        ifile.seek(filepos_regs)         
-        gm.genome = ifile.read(512)  # genome is 512 bytes, some unused.
-
-    # Do a genetic annealing process on the register settings to try 
-    # to improve the result. 
-    g.setInitialFitness(fitfunc)
-    regfile = improveMatch(roi, ospect, g)
-
     # Output our best register file result to intermediate file, 
-    # for later conversion to VGM. (todo)
+    # for later conversion to VGM. (TODO!!)
     with open(outfolder+'reg_files.bin','ab') as f:
+      regfile = regDictToFile(regdict)
       f.write(regfile)
 # -----------------------------------------------------------------------------
 # Make sequence to init the OPL3 chip.
@@ -1350,7 +1489,9 @@ def loop():
       elif event.key == pygame.K_p:
         playWave()
       elif event.key == pygame.K_b:
-        bruteForce()
+        bruteForce(genetic=False, ai=True)
+      elif event.key == pygame.K_g:
+        bruteForce(genetic=True, ai=False)
       elif event.key == pygame.K_d:
         allthumbs = {}
         for roi in range(44,46):
