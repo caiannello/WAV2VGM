@@ -8,3 +8,4 @@ output/reg_files.bin
 training_sets/opl3_training_regs.bin
 training_sets/opl3_training_spects.bin
 models/torch_model.pth
+models/old_torch_model.pth

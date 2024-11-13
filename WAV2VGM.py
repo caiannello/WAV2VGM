@@ -1026,11 +1026,30 @@ def bruteForce(genetic = False, ai = True):
   hh = int(screen_height//4)
   slen = len(origspect.spectrogram)
 
-  if ai:
-    model = Model()
-    model.load_state_dict(torch.load('models/torch_model.pth'))
-    model.eval()  # Set the model to evaluation mode
+  try:
+    if ai:
+      model = Model()
+      model.load_state_dict(torch.load('models/torch_model.pth'))
+      model.eval()  # Set the model to evaluation mode
+  except:
+    print('''
+#########################################################
+SORRY!
+------
+I couldn't find the AI model at 'models/torch_model.pth'.
+(Github doesn't want me to push my copy, as it is 600MB.)
+You can train one yourself with these two provided utils:
 
+'src/generate_training_set.py' - Makes training data
+'src/pytorch_train_NN.py'      - Trains the AI model
+
+My results are currently pretty poor though, even with
+a 1 GB training set and 600MB model. Stay Tuned!
+
+#########################################################
+''')
+
+    return
   # init intermediate output file of opl3 reg settings for
   # later conversion to a VGM. (TODO!)
   with open(outfolder+'reg_files.bin','wb') as f:
