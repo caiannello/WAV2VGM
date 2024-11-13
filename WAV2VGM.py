@@ -10,31 +10,30 @@
 # Craig Iannello 2024/11/04
 #
 # -----------------------------------------------------------------------------
+import os
+import sys
 import time
-import pygame
-from pygame.locals import *
-import numpy as np
 import math
-from scipy import signal
-import numpy as np
-from src import spect as sp
-from src import opl_emu as opl
-from src import gene
-
-import numpy as np
-import torch
-import torch.nn as nn  
-
-
 import struct
 import gzip
-import sys
-import pyopl
 import random
 import datetime
 import pprint
-import os
-from copy import deepcopy
+
+import pygame
+from pygame.locals import *
+
+import numpy as np
+from scipy import signal
+import torch
+import torch.nn as nn  
+
+import pyopl  # OPL3 emulator from DosBox
+
+from src import spect as sp
+from src import opl_emu as opl
+from src import gene                # Import 
+from src.model_definitions import OPL3Model  # AI model defs
 
 # randomize the PRNG
 random.seed(datetime.datetime.now().timestamp())
@@ -48,10 +47,14 @@ SLICE_FREQ = 91.552734375   # old setting for arduino
 MAX_SYNTH_CHANS = 18   # polyphony of synth (num independent oscillators)
 OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to a voice (fnum, block)
 SPECT_VERT_SCALE = 3  # set max vert spect axis to 7350 Hz max rather than the orig 22050 Hz  
-
 GENE_MAX_GENERATIONS = 500
-
 # -----------------------------------------------------------------------------
+# todo: make folders we need which don't exist
+tmpfolder = 'temp/'
+infolder = 'input/'
+outfolder = 'output/'
+modelsfolder = "models/"
+
 pygame.init()
 try:
     pygame.mixer.init(44100, -16, 1)
@@ -63,15 +66,14 @@ if len(sys.argv)==2:
   wavname = sys.argv[1]
 else:
   # default input file during dev, if no file specified on the commandline.
-  wavname = 'HAL 9000 - Human Error.wav'
-  #wavname = 'JFK Inaguration.wav'
-  #wavname = 'Ghouls and Ghosts - The Village Of Decay.wav'
-  #wavname = 'Portal-Still Alive.wav'
-infolder = 'input\\'
-outfolder = 'output\\'
+  wavname = infolder
+  wavname += 'HAL 9000 - Human Error.wav'
+  #wavname += 'JFK Inaguration.wav'
+  #wavname += 'Ghouls and Ghosts - The Village Of Decay.wav'
+  #wavname += 'Portal-Still Alive.wav'
 
-vpath = outfolder+wavname[0:-3]+"vgz"
-origspect = sp.spect(wav_filename='input\\'+wavname,nperseg=4096,quiet=False,clip=False)
+output_vgm_name = outfolder+os.path.basename(wavname[0:-3])+"vgz"
+origspect = sp.spect(wav_filename=wavname,nperseg=4096,quiet=False,clip=False)
 clock = pygame.time.Clock()
 screen=pygame.display.set_mode([screen_width,screen_height])#,flags=pygame.FULLSCREEN)
 pygame.display.set_caption(f'Mimic - Spectrogram - {wavname}')
@@ -973,51 +975,8 @@ def fitfunc(ospect,regfile):
     dif += a*a
   return math.sqrt(dif), tspect
 # -----------------------------------------------------------------------------
-# WIP EXPERIMENT- Try to use a neural network to find the best OPL3 settings
-# for each frame of the spectrogram.
-# -----------------------------------------------------------------------------
-
-# TODO: this is duplicated in the training code. We should
-# make a shared model-definition file!
-
-class Model(nn.Module):
-    def __init__(self):
-        super(Model, self).__init__()        
-        # Convolutional layers
-        self.conv_layers = nn.Sequential(
-            nn.Conv1d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2),
-            nn.ReLU(),
-            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=2),
-            nn.ReLU()
-        )        
-        # Fully connected layers
-        self.model = nn.Sequential(
-            nn.Linear(32 * 2048, 2048),  # Adjusted input size for flattened Conv1d output
-            nn.BatchNorm1d(2048),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(2048, 4096),
-            nn.BatchNorm1d(4096),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(4096, 2048),
-            nn.BatchNorm1d(2048),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(2048, 1024),
-            nn.BatchNorm1d(1024),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(1024, 290)
-        )
-    def forward(self, x):
-        x = x.unsqueeze(1)  # Shape becomes [batch_size, 1, 2048]        
-        x = self.conv_layers(x)        
-        x = x.view(x.size(0), -1)  # Shape becomes [batch_size, 32 * 2048]        
-        x = self.model(x)        
-        return x
-# -----------------------------------------------------------------------------
-# Code to brute-force a solution using either a (slow) genetic algorithm or a 
+# WIP EXPERIMENT- 
+# Tries to brute-force a solution using either a (slow) genetic algorithm or a 
 # convolutional neural-network.
 # -----------------------------------------------------------------------------
 def bruteForce(genetic = False, ai = True):
@@ -1031,8 +990,8 @@ def bruteForce(genetic = False, ai = True):
 
   try:
     if ai:
-      model = Model()
-      model.load_state_dict(torch.load('models/torch_model.pth'))
+      model = OPL3Model()
+      model.load_state_dict(torch.load(modelsfolder+'torch_model.pth'))
       model.eval()  # Set the model to evaluation mode
   except:
     print('''
@@ -1059,7 +1018,7 @@ this message and the READMEs.  Stay Tuned!
     return
   # init intermediate output file of opl3 reg settings for
   # later conversion to a VGM. (TODO!)
-  with open(outfolder+'reg_files.bin','wb') as f:
+  with open(tmpfolder+'reg_files.bin','wb') as f:
     pass
 
   # brute-force loop: -----
@@ -1131,7 +1090,7 @@ this message and the READMEs.  Stay Tuned!
 
     # Output our best register file result to intermediate file, 
     # for later conversion to VGM. (TODO!!)
-    with open(outfolder+'reg_files.bin','ab') as f:
+    with open(tmpfolder+'reg_files.bin','ab') as f:
       regfile = regDictToFile(regdict)
       f.write(regfile)
 # -----------------------------------------------------------------------------
@@ -1456,7 +1415,7 @@ def fastAnalyze():
   outvgm+=gd3_dat
   vgm_eof_ofs = len(outvgm)-0x04
   outvgm=outvgm[0:4]+struct.pack('<I',vgm_eof_ofs)+outvgm[8:0x14]+struct.pack('<I',gd3_ofs)+outvgm[0x18:]
-  with gzip.open(vpath, 'wb') as f:
+  with gzip.open(output_vgm_name, 'wb') as f:
       f.write(outvgm)    
 
   print(f'{slices} slices, {len(rows)} frames')

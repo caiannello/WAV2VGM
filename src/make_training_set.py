@@ -14,10 +14,15 @@
 # permutation.
 #
 # As a possible TODO, since these models are not training so great yet,
-# it might help to have a mode here where it will output some simpler
-# one-voice and two-voice permutations, along with the current method of
-# throwing the kitchen sink at it the whole time. Maybe that'll help? (I'm 
-# new to this AI stuff.)
+# Rather than throwing the kitchen sink at it the whole time, maybe there
+# should be some modes where we do something simpler, like one-voice and 
+# two-voice permutations, and some of the automatic fits like WAV2VGM does 
+# now, with the 1-op sine waves?.
+#
+# Hopefully, some simpler training cases might help the algorithm figure 
+# things out?
+#
+# (I'm a total noob to this AI stuff.)
 #
 # Craig Iannello 2024/11/04
 ###############################################################################
@@ -51,28 +56,27 @@ Notes:
 The purpose of this utility is to generate a training set for the AI used in 
 the WAV2VGM project. This version is geared towards OPL3 synthesis- It makes 
 tons of random OPL3 register settings, and for each one, the PyOPL emulator 
-is used to render a short 4096-point waveform output. If the wave is all 
-zeroes, it is thrown out and we start over with another config.
-
-If the wave has sound in it, a frequency spectrum is calculated, and a set
-of data is added to the training set output, which consists of two files:
+is used to render a short, 4096-point waveform. If the wave is all zeroes, 
+it is thrown out, and another config is chosen. If the wave has sound in it,
+a frequency spectrum is calculated, and a set of data is added to the training
+set output, which consists of two files:
 
                 File Name | Record Type | Rec. Description
-                ----------+-------------+-----------------
+   -----------------------+-------------+-----------------
    opl3_training_regs.bin | float[290]  | Synth configuration vector
- opl3_training_spects.bin | byte[2048]  | Currenponding frequency spectrum
+ opl3_training_spects.bin | byte[2048]  | 2048-bin frequency spectrum
 
 The spectra are used as the inputs for training, and the configs are used
-as the ground-truth outputs we would like the AI to achieve when given
+as the ground-truth outputs that we'd like the AI to produce when given
 such a spectrum.
 
-*** Note on re-running this utility: (Will I lose my precious data???!)
+*** Note on re-running this utility:
 
-If closed and restarted, the utility will check for pre-existing training
+If closed and restarted, this tool will check for pre-existing training
 data. If some exists, and if both files are sized correctly, (in multiples
-of the record size) the files will be kept and expanded. 
+of the record size) the files will be kept and expanded upon. 
 
-If the files aren't the right sizes, though, they'll get overwritten!
+If the files aren't the right sizes though, they'll get overwritten!
 
 -------------------------------------------------------------------------------
 
