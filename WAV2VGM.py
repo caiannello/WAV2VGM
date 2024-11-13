@@ -1044,7 +1044,11 @@ You can train one yourself with these provided utils:
 'src/pytorch_train_NN.py'      - Trains the AI model
 
 My results are currently pretty poor though, even with
-a 1 GB training set and 600MB model. Stay Tuned!
+a 1 GB training set and 600MB model.
+
+If I start having success with the AI stuff, I will
+share the model on my personal website and update 
+this message and the READMEs.  Stay Tuned!
 
 #########################################################
 ''')

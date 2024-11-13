@@ -13,6 +13,12 @@
 # though, since we currently only care about one output spectrum per 
 # permutation.
 #
+# As a possible TODO, since these models are not training so great yet,
+# it might help to have a mode here where it will output some simpler
+# one-voice and two-voice permutations, along with the current method of
+# throwing the kitchen sink at it the whole time. Maybe that'll help? (I'm 
+# new to this AI stuff.)
+#
 # Craig Iannello 2024/11/04
 ###############################################################################
 import numpy as np
@@ -67,9 +73,10 @@ data. If some exists, and if both files are sized correctly, (in multiples
 of the record size) the files will be kept and expanded. 
 
 If the files aren't the right sizes, though, they'll get overwritten!
+
 -------------------------------------------------------------------------------
 
-Starting...
+Now Starting...
 ''')
 # -----------------------------------------------------------------------------
 # display window width and height
