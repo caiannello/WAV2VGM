@@ -941,6 +941,9 @@ def improveMatch(roi, ospect, g):
         pygame.draw.rect(screen,(0,0,0),(0,yofs,ww,hh))  
         plotTestSpect(tspect,-115.0,0,gcolor=(255,255,0),yofs=yofs)
         plotTestSpect(ospect,-115.0,0,gcolor=(255,255,255),yofs=yofs)
+        plotText("Test Spectrum",8,yofs+8)
+        plotText("Fitness",8,(screen_height-1)-24)
+
       px = iter*ww//GENE_MAX_GENERATIONS
       py = (screen_height-1)-(hh*fit//initfit)
       if iter>0:
@@ -1097,7 +1100,7 @@ this message and the READMEs.  Stay Tuned!
     if genetic:
       # Init an empty population for the genetic algorithm,
       # noting the spectrum we hope to achieve.
-      print('Making initial population')
+      print('Making initial population, please standby...')
       g = gene.gene(1000, ospect, fitfunc)
       for i in range(0,1000):
         opl_regs = initRegs()
