@@ -1037,8 +1037,8 @@ def bruteForce(genetic = False, ai = True):
 SORRY!
 ------
 I couldn't find the AI model at 'models/torch_model.pth'.
-(Github doesn't want me to push my copy, as it is 600MB.)
-You can train one yourself with these two provided utils:
+Github doesn't want me to push my copy, as it is 600MB.
+You can train one yourself with these provided utils:
 
 'src/generate_training_set.py' - Makes training data
 'src/pytorch_train_NN.py'      - Trains the AI model
