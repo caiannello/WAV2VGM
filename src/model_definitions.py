@@ -35,11 +35,9 @@ class OPL3Model(nn.Module):
             nn.ReLU(),
             nn.Linear(1024, 290)
         )
-    def forward(self, x, weighting_vector):
+    def forward(self, x):
         # Reshape input to add a channel dimension for Conv1d layers
         x = x.unsqueeze(1)  # Shape becomes [batch_size, 1, 2048]  
-        # Now apply the weighting
-        x = x * weighting_vector              
         # Pass through convolutional layers
         x = self.conv_layers(x)        
         # Flatten the output from the Conv1d layers
