@@ -30,7 +30,7 @@ import numpy as np
 import math
 from   scipy import signal
 import spect as sp
-import opl_emu as opl
+from   OPL3 import OPL3
 import struct
 import pyopl
 import random
@@ -46,8 +46,8 @@ import os
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
-sfilename = dir_path+'/../training_sets/opl3_training_spects.bin'
-rfilename = dir_path+'/../training_sets/opl3_training_regs.bin'
+sfilename = dir_path+'/../training_sets/new_opl3_training_spects.bin'
+rfilename = dir_path+'/../training_sets/new_opl3_training_regs.bin'
 
 print('''
 -------------------------------------------------------------------------------
@@ -90,6 +90,170 @@ hh=1080
 pygame.init()
 screen=pygame.display.set_mode([ww,hh])#,flags=pygame.FULLSCREEN)
 pygame.display.set_caption(f'Making OPL3 Training Set')
+
+# each operator (indexes [0..35]) has a specific byte-offset to
+# locate it within various sections of the opl3 register bank.
+#
+# Notice how these are NOT CONTINUOUS!  (Caused me some headaches!)  
+
+op_reg_ofs = [ 
+  0x000,  0x001,  0x002,  0x003,  0x004,  0x005,  0x008,  0x009,  0x00A,  # bank 0
+  0x00B,  0x00C,  0x00D,  0x010,  0x011,  0x012,  0x013,  0x014,  0x015,
+  0x100,  0x101,  0x102,  0x103,  0x104,  0x105,  0x108,  0x109,  0x10A,  # bank 1 (OPL3 only)
+  0x10B,  0x10C,  0x10D,  0x110,  0x111,  0x112,  0x113,  0x114,  0x115,
+  ]
+
+chan_reg_ofs = [
+  0x000, 0x001, 0x002, 0x003, 0x004, 0x005, 0x006, 0x007, 0x008, 
+  0x100, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x108
+]
+
+# given a float vector element f, with range [0.0,1.0], and a 
+# desired width in bits, rescales the float to an integer of 
+# that size.
+
+def vecFltToInt(f, bwid):
+  mag = (1<<bwid)-1
+  return round(f*mag)
+
+# reverse of the above operation
+
+def vecIntToFlt(i, bwid):
+  mag = (1<<bwid)-1
+  return float(i/mag)
+
+# Convert regions of interest from an OPL3 register file
+# into an synth configuration vector for the AI. 
+
+vector_elem_labels = [
+  '11f12','10f13','9f12','2f5','1f4','0f4',
+]
+
+def rfToV(rf):
+  global op_reg_ofs, chan_reg_ofs
+  v=[]
+  # one chip-wide cfg reg becomes 6 vector elements
+  # 0x104: [(0,2),('11f12',1),('10f13',1),('9f12',1),('2f5',1),('1f4',1),('0f4',1)], # sets to 4-op the indicated channel pair
+  b = rf[0x104]
+  mask = 0b00100000
+  while mask:
+    if b & mask:
+      v.append(1.0)
+    else:
+      v.append(0.0)
+    mask>>=1
+  # chan-related things
+  # 0xA0: [('FnLow',8)],
+  # 0xB0: [(0,2),('KeyOn',1),('Block',3),('FnHi',2)],
+  # 0xC0: [('OutD',1),('OutC',1),('OutR',1),('OutL',1),('FbFct',3),('SnTyp',1)]  
+  for i in range(0,18):
+    o = chan_reg_ofs[i]
+    flow = rf[0xA0|o]
+    b = rf[0xB0|o]
+    c = rf[0xC0|o]
+    fhi = b&3
+    block = (b>>2)&7
+    keyon = (b>>5)&1
+    sntype = c&1
+    fbcnt = (c>>1)&3
+    freq = flow|(fhi<<8)|(block<<10)
+    v.append(float(keyon))
+    vector_elem_labels.append('KeyOn.c'+str(i))
+    v.append(vecIntToFlt(freq,13))
+    vector_elem_labels.append('Freq.c'+str(i))
+    v.append(vecIntToFlt(fbcnt,3))
+    vector_elem_labels.append('FbCnt.c'+str(i))
+    v.append(float(sntype))
+    vector_elem_labels.append('SnTyp.c'+str(i))
+  # op-related_things:
+  # 0x20: [('Trem',1),('Vibr',1),('Sust',1),('KSEnvRt',1),('FMul',4)],
+  # 0x40: [('KSAtnLv',2),('OutLv',6)],
+  # 0x60: [('AttRt',4),('DcyRt',4)],
+  # 0x80: [('SusLv',4),('RelRt',4)],  
+  for i in range(0,36):
+    o=op_reg_ofs[i]
+    fmul = rf[0x20|o]&15
+    f = rf[0x40|o]
+    ws = rf[0xE0|o]&7
+    outlv = f&31
+    ksatnlv = (f>>6)&3
+    v.append(vecIntToFlt(fmul,4))
+    vector_elem_labels.append('FMul.o'+str(i))
+    v.append(vecIntToFlt(ksatnlv,2))
+    vector_elem_labels.append('KSAtnLv.o'+str(i))    
+    v.append(vecIntToFlt(outlv,6))
+    vector_elem_labels.append('OutLv.o'+str(i))
+    v.append(vecIntToFlt(ws,3))
+    vector_elem_labels.append('WavSel.o'+str(i))
+
+  return v
+
+# opposite of the above operation, also sets some 
+# defaults that don't concern the AI.
+def RF(rf, idx, v):
+  return rf[0:idx] + struct.pack('B',v) + rf[idx+1:]
+
+
+def initRegFile():
+  rf = b'\0'*512
+  rf = RF(rf,0x105,0x01)
+  for i in range(0,36):
+    o=op_reg_ofs[i]
+    rf = RF(rf,0x20|o,0b00100000)    
+    rf = RF(rf,0x60|o,0xff)    
+    rf = RF(rf,0x80|o,0x0f)    
+  return rf
+
+def vToRf(v):
+  global op_reg_ofs, chan_reg_ofs
+  rf = initRegFile()
+  i = 0
+  for j in range(0,6):
+    i<<=1
+    if v[0+j]>0.5:
+      i|=1
+  rf = RF(rf, 0x104, i)
+
+  # chan-related things
+  # 0xA0: [('FnLow',8)],
+  # 0xB0: [(0,2),('KeyOn',1),('Block',3),('FnHi',2)],
+  # 0xC0: [('OutD',1),('OutC',1),('OutR',1),('OutL',1),('FbFct',3),('SnTyp',1)]  
+  for i in range(0,18):
+    o = chan_reg_ofs[i]
+    keyon = 1 if v[j+0] >= 0.5 else 0
+    freq = vecFltToInt(v[j+1],13)
+    fbcnt = vecFltToInt(v[j+2],3)
+    sntyp = 1 if v[j+3] >= 0.5 else 0
+    j+=4
+    flow = freq&0xff
+    freq>>=8
+    fhi = freq&3
+    freq>>=2
+    blk = freq&7
+    blk>>=3
+    sntyp = freq&1
+    rf = RF(rf,0xA0|o,flow)
+    rf = RF(rf,0xB0|o,(keyon<<5)|(blk<<2)|fhi)
+    rf = RF(rf,0xC0|o,0b00110000 | (fbcnt<<1) | sntyp)
+
+  # op-related_things:
+  # 0x20: [('Trem',1),('Vibr',1),('Sust',1),('KSEnvRt',1),('FMul',4)],
+  # 0x40: [('KSAtnLv',2),('OutLv',6)],
+  # 0x60: [('AttRt',4),('DcyRt',4)],
+  # 0x80: [('SusLv',4),('RelRt',4)],  
+  for i in range(0,36):
+    o=op_reg_ofs[i]
+    fmul = vecFltToInt(v[j+0],4)
+    ksatnlv = vecFltToInt(v[j+1],2)
+    outlv = vecFltToInt(v[j+2],6)
+    wavsel = vecFltToInt(v[j+3],3)
+    j+=4
+    rf = RF(rf,0x20|o,0b00100000 | fmul)    
+    rf = RF(rf,0x40|o,outlv | (ksatnlv<<6))    
+    rf = RF(rf,0x60|o,0xff)    
+    rf = RF(rf,0x80|o,0x0f)    
+    rf = RF(rf,0xe0|o,wavsel)    
+  return rf
 
 # randomize the PRNG
 random.seed(datetime.datetime.now().timestamp())
@@ -165,33 +329,6 @@ def plotWaveform(wave):
     y1=int((s1+32768)*hh/65536)
     pygame.draw.line(screen, (255,255,0), (x0,y0),(x1,y1))
 # -----------------------------------------------------------------------------
-# show min/max lines for every 32 bins of spectrum
-# -----------------------------------------------------------------------------
-def plotThumb(t):
-  global screen
-  global MIN_DB,MAX_DB
-  global ww,hh  
-  l = len(t)
-  hsr = 22050
-  if MIN_DB==MAX_DB:  # dont wanna /0
-    return
-  # draw single spectrum 
-  for i in range(0,l,2):
-    x0=int(i*ww/l)
-    x1=int((i+2)*ww/l)
-    a,b = struct.unpack('BB',t[i:i+2])
-    a = -a
-    b = -b
-    v0=int((a-MIN_DB)*hh/(MAX_DB-MIN_DB))
-    y0=hh-1-v0
-    if y0>=0 and y0<hh:
-      pygame.draw.line(screen, (128,255,128), (x0,y0),(x1,y0))
-
-    v1=int((b-MIN_DB)*hh/(MAX_DB-MIN_DB))
-    y1=hh-1-v1
-    if y1>=0 and y1<hh:
-      pygame.draw.line(screen, (255,128,128), (x0,y1),(x1,y1))    
-# -----------------------------------------------------------------------------
 def showRegs(opl_regs):  
   keys = list(opl_regs.keys())
   keys.sort()
@@ -203,18 +340,14 @@ def showRegs(opl_regs):
 # Setup the OPL emulator with the specified register values, generate 4096 
 # audio samples, and return resultant frequency spectrum.
 # -----------------------------------------------------------------------------
-def renderOPLFrame(opl_regs):
+def renderOPLFrame(regfile):
   global rawbin_low, rawbin_high, wave_low, wave_high
   # init opl emulator
-  o = opl.opl_emu()
+  o = OPL3()
   o.do_init()
 
-  keys = list(opl_regs.keys())
-  keys.sort()
+  o.writeregfile(regfile)
 
-  for (b,r) in keys:
-    v = opl_regs[(b,r)]
-    o.write(b,r,v)
   o._output = bytes()
   # render 4096 samples
   o._render_samples(4096)  
@@ -244,266 +377,24 @@ def renderOPLFrame(opl_regs):
     #showregs(opl_regs)
   # return waveform and spectrogram, if any
   return wave, spec
-# -----------------------------------------------------------------------------
-# takes a float[2048] spectrum and squishes it down to 64 bins, each containing
-# the min/max of the 32 bins it represents.
-# -----------------------------------------------------------------------------
-def spectThumbnail(spect):
-  thumb = b''
-  for bidx in range(0,2048,2048//64):
-    i = abs(int(min(spect[bidx:bidx+2048//64])))
-    x = abs(int(max(spect[bidx:bidx+2048//64])))
-    if i>255:
-      i=255
-    if x>255:
-      x=255
-    thumb+=struct.pack('BB',i,x)
-  return thumb
-# -----------------------------------------------------------------------------  
-# Some OPL3 registers we're interested in:  X means can be 0 or 1/
-#
-# $001        %xxWxxxxx - W: waveform select enable
-# $008        %xNxxxxxx - N: note select (keyboard split mode)
-# $X60...$X75 %AAAADDDD - A: Attack Rate: D: Decay rate
-# $105        %xxxxxxxN - N: OPL3 enable
-# $0BD        %AVRBSTCH - A: trem dep, V:vib depth, R:perc mode enable, B:BD, S:SD, T:TOM, C: TC, H:HIHAT
-# $X80...$X95 %SSSSRRRR - S: Sustain level, R: release rate
-# $X20...$X35:%AVEKMMMM - A: amplitude mod, V: Vibrato, E: EGS 1:sustained/0:not, 
-#                         K: Key:scale env rate, M: mult: 0:0.5, 1:1, 2:2...
-# $X40...$X55 %KKTTTTTT - K: KSL atten, TL: total level
-# $XA0...$XA8 %FFFFFFFF - F: f-num (low)
-# $XB0...$XB8 %xxKBBBFF - K: keyon, B: block, F: f-num (high)
-# $XC0...$XC8 %DCBAFFFC - D: chand, C:chanc: B:Right, A:Left, F: FBAK, C:CNT
-# $XE0...$XF5 %xxxxxWWW - W: op waveform sel
-# $104        %xxCCCCCC - C: Operator connection select
-# -------------------------------------------------------------------------------
-# Permutation map: (0/1: fixed values, alphabetics: permuted values)
-#
-# Constant settings ------
-#
-# $001        %00100000
-# $105        %00000001
-# $008        %00000000
-# $0BD        %00000000 - percussion currently unused
-# $X60...$X75 %11111111 - ADSR stuff, currently fixed to be always-on.
-# $X80...$X95 %00001111 - 
-#
-# $104        %00CCCCCC - 2op / 4op selection bits
-#
-# per-operator settings (22*2 operators) ------
-#
-# $X20...$X35:%0010MMMM 
-# $X40...$X55 %KKTTTTTT - ksl atten, total level
-# $XE0...$XF5 %00000WWW - waveform sel
-#
-# per-channel settings (9*2 channels) -----
-# 
-# $XA0...$XA8 %FFFFFFFF - fnum low
-# $XB0...$XB8 %00KBBBFF - keyon, block, fnum hi
-# $XC0...$XC8 %1111FFFC - feedback, connection set
-#
-# -----------------------------------------------------------------------------
-permutable_regidxs = [0x104]
 
-permutable_splits = { 0x104:[('_','00'),('4o0',1),('4o1',1),('4o2',1),('4o3',1),('4o4',1),('4o5',1)]}
-
-for i in range(0,0x16):
-  permutable_regidxs.append(0x020+i)
-  permutable_splits[0x020+i] = [('_',"0010"),('OMulA',4)]
-  permutable_regidxs.append(0x120+i)
-  permutable_splits[0x120+i] = [('_',"0010"),('OMulB',4)]
-  permutable_regidxs.append(0x040+i)
-  permutable_splits[0x040+i] = [('KSLA',2),('TlvA',6)]
-  permutable_regidxs.append(0x140+i)
-  permutable_splits[0x140+i] = [('KSLB',2),('TlvB',6)]
-  permutable_regidxs.append(0x0E0+i)
-  permutable_splits[0x0E0+i] = [('_',"00000"),('WavA',3)]
-  permutable_regidxs.append(0x1E0+i)
-  permutable_splits[0x1E0+i] = [('_',"00000"),('WavB',3)]
-
-for i in range(0,0x09):
-  permutable_regidxs.append(0x0A0+i)
-  permutable_splits[0x0A0+i] = [('FnLA',8)]
-
-  permutable_regidxs.append(0x1A0+i)
-  permutable_splits[0x1A0+i] = [('FnLB',8)]
-
-  permutable_regidxs.append(0x0B0+i)
-  permutable_splits[0x0B0+i] = [('_',"00"),('KonA',1),('BlkA',3),('FnHA',2)]
-
-  permutable_regidxs.append(0x1B0+i)
-  permutable_splits[0x1B0+i] = [('_',"00"),('KonB',1),('BlkB',3),('FnHB',2)]
-
-  permutable_regidxs.append(0x0C0+i)
-  permutable_splits[0x0C0+i] = [('_',"1111"),('FbA',3),('CcB',1)]
-
-  permutable_regidxs.append(0x1C0+i)
-  permutable_splits[0x1C0+i] = [('_',"1111"),('FbB',3),('CcB',1)]
-
-permutable_regidxs.sort()
-
-permute_counts = {}
-for i,ridx in enumerate(permutable_regidxs):  
-  b = (ridx>>8)&1
-  r = ridx&0xff
-  for si,(ll,bb) in enumerate(permutable_splits[ridx]):
-    if ll!='_':
-      permute_counts[(b,r,si)] = 0
-
-# -----------------------------------------------------------------------------
-# resets the opl configuration to just the fixed-value parts
-# -----------------------------------------------------------------------------
-def initRegs():
-  opl_regs = { (0,0x01): 0x20, (1,0x05): 0x01, (0,0x08): 0x00, (0,0xBD): 0, (1,0x04):0 }
-  for b in range(0,2):
-    for j in range(0,0x16):
-      opl_regs[(b,j+0x20)] = 0x20
-      opl_regs[(b,j+0x40)] = 0x20
-      opl_regs[(b,j+0x60)] = 0xff
-      opl_regs[(b,j+0x80)] = 0x0f
-      opl_regs[(b,j+0xe0)] = 0x00
-    for j in range(0,0x9):
-      opl_regs[(b,j+0xA0)] = 0x00
-      opl_regs[(b,j+0xB0)] = 0x00
-      opl_regs[(b,j+0xC0)] = 0xf0   
-  return opl_regs
-
-# $001        %00100000
-# $105        %00000001
-# $008        %00000000
-# $0BD        %00000000 - percussion currently unused
-# $X60...$X75 %11111111 - ADSR stuff, currently fixed to be always-on.
-# $X80...$X95 %00001111 - 
-#
-# $104        %00CCCCCC - 2op / 4op selection bits
-#
-# per-operator settings (22*2 operators) ------
-#
-# $X20...$X35:%0010MMMM 
-# $X40...$X55 %KKTTTTTT - ksl atten, total level
-# $XE0...$XF5 %00000WWW - waveform sel
-#
-# per-channel settings (9*2 channels) -----
-# 
-# $XA0...$XA8 %FFFFFFFF - fnum low
-# $XB0...$XB8 %00KBBBFF - keyon, block, fnum hi
-# $XC0...$XC8 %1111FFFC - feedback, connection set  
-# -----------------------------------------------------------------------------
-# given a byte value, start bit idx [0,7] and end bit idx [0,7]
-# extracts the bit string from byte b and converts it to a float mag [0.0,1.0]
-# -----------------------------------------------------------------------------
-def getBitField(v,lbl,sb,eb):
-  slen = sb-eb
-  mag = (1<<slen)-1
-  v = (v<<(8-sb)) & 0xff
-  v = (v>>(8-slen))
-  r = float(v)/float(mag)
-  #print(f'{lbl=}: {v=} {r=:5.2f}')
-  return r
-
-# -----------------------------------------------------------------------------
-# convert an opl congiguration dict into a vector representation for
-# training the AI.  (each field gets a float [0.0,1.0] in the vector)
-# -----------------------------------------------------------------------------
-def regDictToVect(opl_regs):
-  global permutable_regidxs, permutable_splits
-  permarray = []
-  for i,ridx in enumerate(permutable_regidxs):
-    b = (ridx>>8) & 1
-    r = ridx & 0xff
-    v = 0
-    if (b,r) in opl_regs:
-      v = opl_regs[(b,r)]
-    sbit = 8
-    for (lbl,bts) in permutable_splits[ridx]:
-      if lbl == '_':
-        sbit-=len(bts)
-      else:
-        ebit = sbit-bts
-        permarray.append(getBitField(v,lbl,sbit,ebit))
-        sbit = ebit
-  return permarray
-# -----------------------------------------------------------------------------
-# convert a float configuration vector into a configuration dictionary
-# -----------------------------------------------------------------------------
-def intToBits(v,nbit):
-  bs = bin(v)[2:]
-  pbs = '0'*(nbit-len(bs))+bs
-  #print(f'      intToBits({v=},{nbit=}): {bs=} {pbs=}')
-  return pbs
-
-def bitsToInt(bs):
-  return int(bs,2)
-
-def insBitsFloat(v,sbit,nbit,f):
-  #print(f'      insBitsFloat({v=},{sbit=},{nbit=},{f=:5.2f}): ',end='')
-  mag = (1<<nbit)-1
-  orig = intToBits(v,8)
-  newv = intToBits(round(f*mag),nbit)
-  a = 8-sbit
-  b = a+nbit
-  bs = orig[0:a] + newv[-nbit:] + orig[b:]
-  i = bitsToInt(bs)
-  #print(f'{mag=} {orig=} {newv=} {a=} {b=} {bs=} {i=}')
-  return i
-
-def insBitsString(v,sbit,nbit,s):
-  mag = (1<<nbit)-1
-  f = int(s,2)/mag
-  #print(f'      insBitsString({v=},{sbit=},{nbit=},{s=}): {mag=} {f=}')
-  return insBitsFloat(v,sbit,nbit,f)
-
-def vectToRegDict(vec):
-  global permutable_regidxs, permutable_splits
-  regs = initRegs()
-
-  j=0
-  for i,ridx in enumerate(permutable_regidxs):
-    b = (ridx>>8) & 1
-    r = ridx & 0xff
-    if not (b,r) in regs:
-      regs[(b,r)]=0x00
-    v = 0x00
-
-    sbit = 8
-    for (lbl,bts) in permutable_splits[ridx]:
-      if lbl == '_':
-        v=insBitsString(v,sbit,len(bts),bts)
-        regs[(b,r)]=v
-        sbit-=len(bts)
-      else:
-        ebit = sbit-bts
-        f = vec[j]
-        j+=1
-        v=insBitsFloat(v,sbit,sbit-ebit,f)
-        regs[(b,r)]=v
-        sbit = ebit
-
-  return regs
-# -----------------------------------------------------------------------------
-def showPermutationCounts():
-  global permute_counts
-  keys = list(permute_counts.keys())
-  keys.sort()
-
-  for k in keys:
-    v = permute_counts[k]
-    (b,r,fi) = k
-    print(f'  ({b},{r:02X},{fi}): {v}')
 # -----------------------------------------------------------------------------
 # main loop
 # -----------------------------------------------------------------------------
 def main():
   global rawbin_high, wave_low, wave_high, reinit_freq
-  global ww,hh,permutable_splits,permutable_regidxs, permute_counts  
-  opl_regs = initRegs()
-  j=0
+  global ww,hh
 
+  j=0
+  opl_vec = rfToV(initRegFile())
+  vl = len(opl_vec)
+  print(f'vector length: {vl}')
+  
   try:
     ssize = os.path.getsize(sfilename)
     rsize = os.path.getsize(rfilename)
     smod = ssize % 2048
-    rmod = rsize % (290*115)
+    rmod = rsize % (vl*115)
     print(f'{ssize=}, {smod=}, {rsize=}, {rmod=}')
   except Exception as e:
     ssize = 0
@@ -511,7 +402,7 @@ def main():
     smod = -1
     rmd  = -1
 
-  if (not ssize) or (ssize%2048) or (not rsize) or (rsize%(290*4)):
+  if (not ssize) or (ssize%2048) or (not rsize) or (rsize%(vl*4)):
     print("A training file doesn't exist or is of unexpected size and will be rewritten.")
     sfile = open(sfilename, 'wb')         # list of (reg_config, spectrum[2046)
     rfile = open(rfilename, 'wb')  # list of corresponding 128-byte squished-spectra
@@ -527,83 +418,30 @@ def main():
   ic = reinit_freq  # reinitialization countdown
   lastszmb = -1
   iters=0
+  perms_this_mode = 0
+  REINIT_PERIOD = 1000
+
   while True:
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  # Usually wise to be able to close your program.
         rfile.close()
         sfile.close()
-        print('\npermute counts:\n')
-        showPermutationCounts()
-        print('\n final regvals\n')
-        showRegs(opl_regs)
         return 
 
-    while True:
-      ridx = random.choice(permutable_regidxs)
-      b = (ridx>>8)&1
-      r = ridx&0xff
-      ll,bb = random.choice(permutable_splits[ridx])
-      if ll!='_':
-        break
-    
-    # get startine and ending bitpos to fuzz
-    splits = permutable_splits[ridx]
-    sidx = 0
-    sbit=8
-    while True:
-      al,ab = splits[sidx]
-      if al==ll:
-        break
-      if al=='_':
-        sbit-=len(ab)
-      else:
-        sbit-=ab
-      sidx+=1
-      
-    v = opl_regs[(b,r)]
-    f = random.random()
-    v = insBitsFloat(v,sbit,bb, f)
-    opl_regs[(b,r)]=v
 
-    try:
-      permute_counts[(b,r,sidx)]+=1
-    except:
-      print(f'PNF! ({b},{r:02X},{sidx})')
-      exit()
-
+    x = random.randint(0,vl-1)
+    opl_vec[x] = random.random()
+    rf = vToRf(opl_vec)
     # render a 4096-point waveform and its spectrum
-    waveform, tspect = renderOPLFrame(opl_regs)
+    waveform, tspect = renderOPLFrame(rf)
 
-    # make a vector representation of the opl config
-    # and render it for comparison to the orig cfg dict
-    vec = regDictToVect(opl_regs)
-    #vregs = vectToRegDict(vec)
-    #waveform1, tspect1 = renderOPLFrame(vregs)
-    '''
-    # also ensure it is reversible
-    good = True
-    for k in opl_regs:
-      if not k in vregs:
-        print(f'{k} NOT FOUND')
-        good=False
-      else:
-        v0 = opl_regs[k]
-        v1 = vregs[k]
-        if v0!=v1:
-          print(f'({k[0]},{k[1]:02X}) MISMATCH {v0=:02X} {v1=:02X}')
-          good=False
-    if not good:
-      print('NOT GOOD!')
-      exit()
-    '''
 
     # if successful, 
     if tspect is not None:
-
-      # write the opl reg configuration vector float[290]
+      # write the opl reg configuration vector float[vl]
       # to the cfg training set file
       sbin = b''
-      for f in vec:
+      for f in opl_vec:
         sbin+=struct.pack('<f',f)
       rfile.write(sbin)
       
@@ -611,7 +449,10 @@ def main():
       # to the spect training set file
       sbin = b''
       for i in range(0,2048):
-        b = abs(int(tspect[i]))
+        try:
+          b = abs(int(tspect[i]))
+        except:
+          b=0
         if b>255:
           b=255
         b = 255-b
@@ -629,16 +470,13 @@ def main():
       if j==10:  # show every 10th set on screen
         j=0        
         try:
-          thumb=spectThumbnail(tspect)
           pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
           # waveform
           plotWaveform(waveform)
           plotSpectrum(tspect)
           #if not tspect1 is None:
           #  plotSpectrum(tspect1,(255,128,128))
-          plotThumb(thumb)
           pygame.display.update()
-
           # get output file size in MB
           fszmb = int(fsz/1024.0/1024.0)
           if fszmb!=lastszmb: # every 1MB out, show a status update.
@@ -652,7 +490,13 @@ def main():
         except:
           # sometimes we get a divide by zero
           pass
-
+      # check to see if we need to switch complexity modes
+      # or reinit the opl3 registers
+      perms_this_mode += 1      
+      if  perms_this_mode % REINIT_PERIOD == 0:
+        print(f'Cleanslate.')
+        perms_this_mode = 0
+        opl_vec = rfToV(initRegFile())
 ###############################################################################
 # ENTRYPOINT
 ###############################################################################

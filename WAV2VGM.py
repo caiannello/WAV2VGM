@@ -28,10 +28,10 @@ from scipy import signal
 import torch
 import torch.nn as nn  
 
-import pyopl  # OPL3 emulator from DosBox
+#import pyopl  # OPL3 emulator from DosBox
 
 from src import spect as sp
-from src import opl_emu as opl
+from src.OPL3 import OPL3
 from src import gene                # Import 
 from src.model_definitions import OPL3Model  # AI model defs
 
@@ -67,11 +67,11 @@ if len(sys.argv)==2:
 else:
   # default input file during dev, if no file specified on the commandline.
   wavname = infolder
-  wavname += 'HAL 9000 - Human Error.wav'
-  #wavname += 'JFK Inaguration.wav'
+  #wavname += 'HAL 9000 - Human Error.wav'
+  wavname += 'JFK Inaguration.wav'
   #wavname += 'Ghouls and Ghosts - The Village Of Decay.wav'
   #wavname += 'Portal-Still Alive.wav'
-
+  #wavname += 'Amiga-Leander-Intro.wav'
 output_vgm_name = outfolder+os.path.basename(wavname[0:-3])+"vgz"
 origspect = sp.spect(wav_filename=wavname,nperseg=4096,quiet=False,clip=False)
 clock = pygame.time.Clock()
@@ -505,11 +505,35 @@ def playWave():
 # -----------------------------------------------------------------------------
 max_freq_per_block = [48.503,97.006,194.013,388.026,776.053,1552.107,3104.215,6208.431]
 fsamp = 14318181.0/288.0
+
+regofs = [
+0x00,0x01,0x02,0x03,
+0x04,0x05,0x0a,0x0b,
+0x0c,0x0d,0x10,0x11,
+0x12,0x13,0x14,0x15,
+0x00,0x01,0x02,0x03,
+0x04,0x05,0x0a,0x0b,
+0x0c,0x0d,0x10,0x11,
+0x12,0x13,0x14,0x15,
+]
+
 # these are the operator indexes per each of the 18 output channels
 # in 2-op mode.
 opidxs_per_chan = [
   (0,3),(1,4),(2,5),(6,9),(7,10),(8,11),(12,15),(13,16),(14,17),
   (18,21),(19,22),(20,23),(24,27),(25,28),(26,29),(30,33),(31,34),(32,35)]
+
+def opsToOfs(opidx0,opidx1):
+  global regofs
+  if opidx0>=18:
+    opidx0-=18
+    opidx1-=18
+  return (regofs[opidx0],regofs[opidx1])
+
+def opToOfs(opidx):
+  global regofs
+  return regofs[opidx]
+
 # -----------------------------------------------------------------------------
 # given a freq in hz, returns the OPL3 F-Num and Blocknum needed to achieve it.
 # -----------------------------------------------------------------------------
@@ -536,7 +560,7 @@ def showRegDict(opl_reg_dict):
 # audio samples, and return resultant frequency spectrum.
 # -----------------------------------------------------------------------------
 def renderOPLFrame(opl_reg_dict):
-  o = opl.opl_emu()
+  o = OPL3()
   o.do_init()
   for (b,r) in opl_reg_dict:
     v = opl_reg_dict[(b,r)]
@@ -631,9 +655,10 @@ for i,ridx in enumerate(permutable_regidxs):
 # resets the opl configuration to just the fixed-value parts
 # -----------------------------------------------------------------------------
 def initRegs():
+  global regofs
   opl_regs = { (0,0x01): 0x20, (1,0x05): 0x01, (0,0x08): 0x00, (0,0xBD): 0, (1,0x04):0 }
   for b in range(0,2):
-    for j in range(0,0x16):
+    for j in regofs:
       opl_regs[(b,j+0x20)] = 0x20
       opl_regs[(b,j+0x40)] = 0x20
       opl_regs[(b,j+0x60)] = 0xff
@@ -1105,7 +1130,7 @@ def opl3init():
   global prev_sets, oplemu
   prev_sets = {}
 
-  oplemu = opl.opl_emu()
+  oplemu = OPL3()
   res = b''
   # enable opl3 mode
   r = 0x05
@@ -1123,40 +1148,40 @@ def opl3init():
     opidxs = opidxs_per_chan[chan]
     if chan<9:      
       # sustain, vibrato,opfreqmult
-      r = 0x20 + opidxs[0]
+      r = 0x20 + opToOfs(opidxs[0])
       v = 0x21
       oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
-      r = 0x20 + opidxs[1]
+      r = 0x20 + opToOfs(opidxs[1])
       v = 0x21
       oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # keyscalelevel, output level
       # setting keyscale level to 6.0 dB of attenuation per rise in octave
       # (we really want more than this and need to implement something ourselves)
-      r = 0x40 + opidxs[0]
+      r = 0x40 + opToOfs(opidxs[0])
       v = 0x30  # 30
       oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
-      r = 0x40 + opidxs[1]
+      r = 0x40 + opToOfs(opidxs[1])
       v = 0x30
       oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # attack rate, decay rate
-      r = 0x60 + opidxs[0]
+      r = 0x60 + opToOfs(opidxs[0])
       v = 0xff
       oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
-      r = 0x60 + opidxs[1]
+      r = 0x60 + opToOfs(opidxs[1])
       v = 0xff
       oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # sust level, release rate
-      r = 0x80 + opidxs[0]
+      r = 0x80 + opToOfs(opidxs[0])
       v = 0x0f
       oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
-      r = 0x80 + opidxs[1]
+      r = 0x80 + opToOfs(opidxs[1])
       v = 0x0f
       oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
@@ -1166,18 +1191,18 @@ def opl3init():
       oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # waveform select sine
-      r = 0xe0 + opidxs[0]
+      r = 0xe0 + opToOfs(opidxs[0])
       v = 0x00
       oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
-      r = 0xe0 + opidxs[1]
+      r = 0xe0 + opToOfs(opidxs[1])
       v = 0x00
       oplemu.write(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
     else:
       chan-=9
-      a = opidxs[0]-18
-      b = opidxs[1]-18
+      a = opToOfs(opidxs[0]-18)
+      b = opToOfs(opidxs[1]-18)
       # sustain, vibrato,opfreqmult
       r = 0x20 + a
       v = 0x21
@@ -1266,11 +1291,11 @@ def opl3params(freq,namp,chan, keyon):
       aval = 0
     if chan<9:
       if (pchan is None) or (pchan[1]!=namp):
-        r = 0x40 + opidxs[0]  # set volume
+        r = 0x40 + opToOfs(opidxs[0])  # set volume
         v = aval
         oplemu.write(0,r,v);              
         res+=struct.pack('BBB',0x5e,r,v)
-        r = 0x40 + opidxs[1]
+        r = 0x40 + opToOfs(opidxs[1])
         v = aval
         oplemu.write(0,r,v);              
         res+=struct.pack('BBB',0x5e,r,v)
@@ -1285,8 +1310,8 @@ def opl3params(freq,namp,chan, keyon):
         res+=struct.pack('BBB',0x5e,r,v)
     else:
       chan-=9
-      a = opidxs[0] - 18
-      b = opidxs[1] - 18
+      a = opToOfs(opidxs[0] - 18)
+      b = opToOfs(opidxs[1] - 18)
       if (pchan is None) or (pchan[1]!=namp):
         r = 0x40 + a # volume
         v = aval

@@ -30,10 +30,16 @@ class OPL3Model(nn.Module):
             nn.Linear(4096, 2048),
             nn.BatchNorm1d(2048),
             nn.ReLU(),
+            nn.Linear(2048, 4096),
+            nn.BatchNorm1d(4096),
+            nn.ReLU(),
+            nn.Linear(4096, 2048),
+            nn.BatchNorm1d(2048),
+            nn.ReLU(),
             nn.Linear(2048, 1024),
             nn.BatchNorm1d(1024),
             nn.ReLU(),
-            nn.Linear(1024, 290)
+            nn.Linear(1024, 222)
         )
     def forward(self, x):
         # Reshape input to add a channel dimension for Conv1d layers
@@ -56,8 +62,8 @@ class OPL3Dataset(Dataset):
         self.reg_file = reg_file
         # size of one frequency spectrum record (uint8[2048])
         self.spect_size = 2048  
-        # size of one synthesizer configuration vector (float32[290])
-        self.reg_size = 290 * 4  # 4 bytes per float
+        # size of one synthesizer configuration vector (float32[222])
+        self.reg_size = 222 * 4  # 4 bytes per float
         # Get the number of available training samples
         self.num_samples = os.path.getsize(spect_file) // self.spect_size
 
@@ -87,7 +93,7 @@ class OPL3Dataset(Dataset):
         self.spect_file = spect_file
         self.reg_file = reg_file
         self.spect_data = np.fromfile(spect_file, dtype=np.uint8).reshape(-1, 2048) / 255.0
-        self.reg_data = np.fromfile(reg_file, dtype=np.float32).reshape(-1, 290)
+        self.reg_data = np.fromfile(reg_file, dtype=np.float32).reshape(-1, 222)
 
     def __len__(self):
         return len(self.spect_data)

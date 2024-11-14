@@ -22,7 +22,7 @@ from   model_definitions import OPL3Model, OPL3Dataset
 # Report device configuration 
 
 devname = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"CUDA or CPU?   I'm selecting: ---> {devname.upper()} <---")
+print(f"\n\nCUDA or CPU?   I'm selecting: ---> {devname.upper()} <---")
 device = torch.device(devname)
 
 # get path to our own file
@@ -39,7 +39,14 @@ batch_size = 32
 epochs = 50
 early_stopping_patience = 5
 
-print('\nTODO: Add code to sanity check training set before starting.')
+print('''
+  TODO: Add code to sanity check training set before starting.
+  In particular, make sure inputs and outputs stay in sync 
+  throughout the file, since the generator can be stopped 
+  and restarted. This could involve re-rendering some of synth
+  configs including the last one, to make sure the spectra still
+  match.
+  ''')
 
 # Load dataset and split into training and validation sets
 # (getter defined in model_definitions.py)
