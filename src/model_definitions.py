@@ -11,9 +11,9 @@ class OPL3Model(nn.Module):
         super(OPL3Model, self).__init__()        
         # Convolutional layers
         self.conv_layers = nn.Sequential(
-            nn.Conv1d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2),  # First conv layer
+            nn.Conv1d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2, padding_mode='reflect'),  # First conv layer
             nn.ReLU(),
-            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=2),  # Second conv layer
+            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=2, padding_mode='reflect'),  # Second conv layer
             nn.ReLU()
         )        
         # Fully connected layers
@@ -24,6 +24,9 @@ class OPL3Model(nn.Module):
             nn.Linear(2048, 4096),
             nn.BatchNorm1d(4096),
             nn.ReLU(),
+            nn.Linear(4096, 4096),
+            nn.BatchNorm1d(4096),
+            nn.ReLU(),
             nn.Linear(4096, 2048),
             nn.BatchNorm1d(2048),
             nn.ReLU(),
@@ -32,9 +35,11 @@ class OPL3Model(nn.Module):
             nn.ReLU(),
             nn.Linear(1024, 290)
         )
-    def forward(self, x):
+    def forward(self, x, weighting_vector):
         # Reshape input to add a channel dimension for Conv1d layers
-        x = x.unsqueeze(1)  # Shape becomes [batch_size, 1, 2048]        
+        x = x.unsqueeze(1)  # Shape becomes [batch_size, 1, 2048]  
+        # Now apply the weighting
+        x = x * weighting_vector              
         # Pass through convolutional layers
         x = self.conv_layers(x)        
         # Flatten the output from the Conv1d layers
@@ -42,36 +47,6 @@ class OPL3Model(nn.Module):
         # Pass through the fully connected layers
         x = self.model(x)        
         return x
-
-'''
-# this version of the model lacks convolutional leyers, and it doesnt 
-# seem to reach an acceptable result after a lot of training.
-class OPL3Model(nn.Module):
-    def __init__(self):
-        super(OPL3Model, self).__init__()
-        self.model = nn.Sequential(
-            nn.Linear(2048, 2048),
-            nn.BatchNorm1d(2048),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(2048, 4096),
-            nn.BatchNorm1d(4096),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(4096, 2048),
-            nn.BatchNorm1d(2048),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(2048, 1024),
-            nn.BatchNorm1d(1024),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(1024, 290)
-        )
-
-    def forward(self, x):
-        return self.model(x)
-'''
 # ------------------------------------------------------------------------
 # Dataset Class - gets individual records from the training files
 

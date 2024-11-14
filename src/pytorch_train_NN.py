@@ -57,6 +57,17 @@ model = OPL3Model().to(device)
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
+# Define parameters
+n_bins = 2048
+max_frequency = 22050
+target_frequency = 7350
+
+# Calculate bin frequency centers
+frequencies = torch.linspace(0, max_frequency, n_bins)
+
+# Exponential decay for weighting, giving higher weights to lower frequencies
+weighting_vector = torch.exp(-frequencies / target_frequency)
+
 # ------------------------------------------------------------------------
 
 # Training
@@ -69,9 +80,11 @@ for epoch in range(epochs):
     running_loss = 0.0
     for batch_idx, (inputs, targets) in enumerate(train_loader, 1):
         inputs, targets = inputs.to(device), targets.to(device)
-        
+        # Ensure weighting_vector is on the same device as input_data
+        weighting_vector = weighting_vector.to(device)
+
         # Forward pass
-        outputs = model(inputs)
+        outputs = model(inputs, weighting_vector)
         loss = criterion(outputs, targets)
         
         # Backward and optimize
