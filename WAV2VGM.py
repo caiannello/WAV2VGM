@@ -559,12 +559,15 @@ def showRegDict(opl_reg_dict):
 # Setup the OPL emulator with the specified register values, generate 4096 
 # audio samples, and return resultant frequency spectrum.
 # -----------------------------------------------------------------------------
-def renderOPLFrame(opl_reg_dict):
+def renderOPLFrame(opl_cfg):  
   o = OPL3()
   o.do_init()
-  for (b,r) in opl_reg_dict:
-    v = opl_reg_dict[(b,r)]
-    o.write(b,r,v)
+  if isinstance(opl_cfg,dict):
+    for (b,r) in opl_cfg:
+      v = opl_cfg[(b,r)]
+      o.write(b,r,v)
+  else:
+    o.writeregfile(opl_cfg)
   o._output = bytes()
   o._render_samples(4096)  
   w = []
@@ -576,8 +579,8 @@ def renderOPLFrame(opl_reg_dict):
   if w.sum():
     newspect = sp.spect(wav_filename = None, sample_rate=44100,samples=w,nperseg=4096, quiet=True)
   else:
-    newspect  = None
-    #showRegDict(opl_reg_dict)
+    newspect  = None    
+    #showRegDict(opl_cfg)
   return newspect
 # -----------------------------------------------------------------------------
 # $001        %00100000
@@ -999,6 +1002,182 @@ def fitfunc(ospect,regfile):
     a = ospect[i]-tspect[i]
     dif += a*a
   return math.sqrt(dif), tspect
+##############################
+##############################
+# each operator (indexes [0..35]) has a specific byte-offset to
+# locate it within various sections of the opl3 register bank.
+#
+# Notice how these are NOT CONTINUOUS!  (Caused me some headaches!)  
+
+op_reg_ofs = [ 
+  0x000,  0x001,  0x002,  0x003,  0x004,  0x005,  0x008,  0x009,  0x00A,  # bank 0
+  0x00B,  0x00C,  0x00D,  0x010,  0x011,  0x012,  0x013,  0x014,  0x015,
+  0x100,  0x101,  0x102,  0x103,  0x104,  0x105,  0x108,  0x109,  0x10A,  # bank 1 (OPL3 only)
+  0x10B,  0x10C,  0x10D,  0x110,  0x111,  0x112,  0x113,  0x114,  0x115,
+  ]
+
+chan_reg_ofs = [
+  0x000, 0x001, 0x002, 0x003, 0x004, 0x005, 0x006, 0x007, 0x008, 
+  0x100, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x108
+]
+
+# given a float vector element f, with range [0.0,1.0], and a 
+# desired width in bits, rescales the float to an integer of 
+# that size.
+
+def vecFltToInt(f, bwid):
+  mag = (1<<bwid)-1
+  return round(f*mag)
+
+# reverse of the above operation
+
+def vecIntToFlt(i, bwid):
+  mag = (1<<bwid)-1
+  return float(i/mag)
+
+# Convert regions of interest from an OPL3 register file
+# into an synth configuration vector for the AI. 
+
+vector_elem_labels = [
+  '11f12','10f13','9f12','2f5','1f4','0f4',
+]
+
+keyfreq_vec_idxs = None
+
+def rfToV(rf):
+  global op_reg_ofs, chan_reg_ofs, keyfreq_vec_idxs
+  note_freqs = False
+  if keyfreq_vec_idxs is None:
+    note_freqs = True
+    keyfreq_vec_idxs = []
+  v=[]
+  # one chip-wide cfg reg becomes 6 vector elements
+  # 0x104: [(0,2),('11f12',1),('10f13',1),('9f12',1),('2f5',1),('1f4',1),('0f4',1)], # sets to 4-op the indicated channel pair
+  b = rf[0x104]
+  mask = 0b00100000
+  while mask:
+    if b & mask:
+      v.append(1.0)
+    else:
+      v.append(0.0)
+    mask>>=1
+  # chan-related things
+  # 0xA0: [('FnLow',8)],
+  # 0xB0: [(0,2),('KeyOn',1),('Block',3),('FnHi',2)],
+  # 0xC0: [('OutD',1),('OutC',1),('OutR',1),('OutL',1),('FbFct',3),('SnTyp',1)]  
+  for i in range(0,18):
+    o = chan_reg_ofs[i]
+    flow = rf[0xA0|o]
+    b = rf[0xB0|o]
+    c = rf[0xC0|o]
+    fhi = b&3
+    block = (b>>2)&7
+    keyon = (b>>5)&1
+    sntype = c&1
+    fbcnt = (c>>1)&3
+    freq = flow|(fhi<<8)|(block<<10)
+    v.append(float(keyon))
+    vector_elem_labels.append('KeyOn.c'+str(i))
+    if note_freqs:
+      keyfreq_vec_idxs.append(len(v))
+    v.append(vecIntToFlt(freq,13))
+    vector_elem_labels.append('Freq.c'+str(i))
+    v.append(vecIntToFlt(fbcnt,3))
+    vector_elem_labels.append('FbCnt.c'+str(i))
+    v.append(float(sntype))
+    vector_elem_labels.append('SnTyp.c'+str(i))
+  # op-related_things:
+  # 0x20: [('Trem',1),('Vibr',1),('Sust',1),('KSEnvRt',1),('FMul',4)],
+  # 0x40: [('KSAtnLv',2),('OutLv',6)],
+  # 0x60: [('AttRt',4),('DcyRt',4)],
+  # 0x80: [('SusLv',4),('RelRt',4)],  
+  for i in range(0,36):
+    o=op_reg_ofs[i]
+    fmul = rf[0x20|o]&15
+    f = rf[0x40|o]
+    ws = rf[0xE0|o]&7
+    outlv = f&31
+    ksatnlv = (f>>6)&3
+    v.append(vecIntToFlt(fmul,4))
+    vector_elem_labels.append('FMul.o'+str(i))
+    v.append(vecIntToFlt(ksatnlv,2))
+    vector_elem_labels.append('KSAtnLv.o'+str(i))    
+    v.append(vecIntToFlt(outlv,6))
+    vector_elem_labels.append('OutLv.o'+str(i))
+    v.append(vecIntToFlt(ws,3))
+    vector_elem_labels.append('WavSel.o'+str(i))
+
+  return v
+
+# opposite of the above operation, also sets some 
+# defaults that don't concern the AI.
+def RF(rf, idx, v):
+  return rf[0:idx] + struct.pack('B',v) + rf[idx+1:]
+
+
+def initRegFile():
+  rf = b'\0'*512
+  rf = RF(rf,0x105,0x01)
+  for i in range(0,36):
+    o=op_reg_ofs[i]
+    rf = RF(rf,0x20|o,0b00100000)    
+    rf = RF(rf,0x60|o,0xff)    
+    rf = RF(rf,0x80|o,0x0f)    
+  return rf
+
+def vToRf(v):
+  global op_reg_ofs, chan_reg_ofs
+  rf = initRegFile()
+  i = 0
+  for j in range(0,6):
+    i<<=1
+    if v[0+j]>0.5:
+      i|=1
+  rf = RF(rf, 0x104, i)
+
+  # chan-related things
+  # 0xA0: [('FnLow',8)],
+  # 0xB0: [(0,2),('KeyOn',1),('Block',3),('FnHi',2)],
+  # 0xC0: [('OutD',1),('OutC',1),('OutR',1),('OutL',1),('FbFct',3),('SnTyp',1)]  
+  for i in range(0,18):
+    o = chan_reg_ofs[i]
+    keyon = 1 if v[j+0] >= 0.5 else 0
+    freq = vecFltToInt(v[j+1],13)
+    fbcnt = vecFltToInt(v[j+2],3)
+    sntyp = 1 if v[j+3] >= 0.5 else 0
+    j+=4
+    flow = freq&0xff
+    freq>>=8
+    fhi = freq&3
+    freq>>=2
+    blk = freq&7
+    blk>>=3
+    sntyp = freq&1
+    rf = RF(rf,0xA0|o,flow)
+    rf = RF(rf,0xB0|o,(keyon<<5)|(blk<<2)|fhi)
+    rf = RF(rf,0xC0|o,0b00110000 | (fbcnt<<1) | sntyp)
+
+  # op-related_things:
+  # 0x20: [('Trem',1),('Vibr',1),('Sust',1),('KSEnvRt',1),('FMul',4)],
+  # 0x40: [('KSAtnLv',2),('OutLv',6)],
+  # 0x60: [('AttRt',4),('DcyRt',4)],
+  # 0x80: [('SusLv',4),('RelRt',4)],  
+  for i in range(0,36):
+    o=op_reg_ofs[i]
+    fmul = vecFltToInt(v[j+0],4)
+    ksatnlv = vecFltToInt(v[j+1],2)
+    outlv = vecFltToInt(v[j+2],6)
+    wavsel = vecFltToInt(v[j+3],3)
+    j+=4
+    rf = RF(rf,0x20|o,0b00100000 | fmul)    
+    rf = RF(rf,0x40|o,outlv | (ksatnlv<<6))    
+    rf = RF(rf,0x60|o,0xff)    
+    rf = RF(rf,0x80|o,0x0f)    
+    rf = RF(rf,0xe0|o,wavsel)    
+  return rf
+
+##############################
+##############################
 # -----------------------------------------------------------------------------
 # WIP EXPERIMENT- 
 # Tries to brute-force a solution using either a (slow) genetic algorithm or a 
@@ -1077,7 +1256,7 @@ this message and the READMEs.  Stay Tuned!
       # make prediction
       predicted_output = predicted_output.numpy().flatten()
       # convert output cfg vector to an opl3 register dictionary    
-      regdict = vectToRegDict(predicted_output)
+      regfile = vToRf(predicted_output)
     # -------------------------------------
 
     # GENETIC ALGORITHM FUN ---------------
@@ -1102,7 +1281,7 @@ this message and the READMEs.  Stay Tuned!
     # -------------------------------------
 
     # give register cfg to opl3 emulator and render a spectrum
-    tspect = renderOPLFrame(regdict)
+    tspect = renderOPLFrame(regfile)
 
     pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
     plotTestSpect(ospect,-115,0,(255,255,255))   # plot original spect
@@ -1116,7 +1295,6 @@ this message and the READMEs.  Stay Tuned!
     # Output our best register file result to intermediate file, 
     # for later conversion to VGM. (TODO!!)
     with open(tmpfolder+'reg_files.bin','ab') as f:
-      regfile = regDictToFile(regdict)
       f.write(regfile)
 # -----------------------------------------------------------------------------
 # Make sequence to init the OPL3 chip.

@@ -46,8 +46,8 @@ import os
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
-sfilename = dir_path+'/../training_sets/new_opl3_training_spects.bin'
-rfilename = dir_path+'/../training_sets/new_opl3_training_regs.bin'
+sfilename = dir_path+'/../training_sets/opl3_training_spects.bin'
+rfilename = dir_path+'/../training_sets/opl3_training_regs.bin'
 
 print('''
 -------------------------------------------------------------------------------
@@ -129,8 +129,14 @@ vector_elem_labels = [
   '11f12','10f13','9f12','2f5','1f4','0f4',
 ]
 
+keyfreq_vec_idxs = None
+
 def rfToV(rf):
-  global op_reg_ofs, chan_reg_ofs
+  global op_reg_ofs, chan_reg_ofs, keyfreq_vec_idxs
+  note_freqs = False
+  if keyfreq_vec_idxs is None:
+    note_freqs = True
+    keyfreq_vec_idxs = []
   v=[]
   # one chip-wide cfg reg becomes 6 vector elements
   # 0x104: [(0,2),('11f12',1),('10f13',1),('9f12',1),('2f5',1),('1f4',1),('0f4',1)], # sets to 4-op the indicated channel pair
@@ -159,6 +165,8 @@ def rfToV(rf):
     freq = flow|(fhi<<8)|(block<<10)
     v.append(float(keyon))
     vector_elem_labels.append('KeyOn.c'+str(i))
+    if note_freqs:
+      keyfreq_vec_idxs.append(len(v))
     v.append(vecIntToFlt(freq,13))
     vector_elem_labels.append('Freq.c'+str(i))
     v.append(vecIntToFlt(fbcnt,3))
@@ -389,7 +397,7 @@ def main():
   opl_vec = rfToV(initRegFile())
   vl = len(opl_vec)
   print(f'vector length: {vl}')
-  
+
   try:
     ssize = os.path.getsize(sfilename)
     rsize = os.path.getsize(rfilename)
@@ -420,7 +428,6 @@ def main():
   iters=0
   perms_this_mode = 0
   REINIT_PERIOD = 1000
-
   while True:
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  # Usually wise to be able to close your program.
@@ -428,8 +435,12 @@ def main():
         sfile.close()
         return 
 
+    if (random.randint(0,5)<2) and (keyfreq_vec_idxs is not None):  
+      # more likely to change a key freq than whatever else
+      x = random.choice(keyfreq_vec_idxs)
+    else:
+      x = random.randint(0,vl-1)
 
-    x = random.randint(0,vl-1)
     opl_vec[x] = random.random()
     rf = vToRf(opl_vec)
     # render a 4096-point waveform and its spectrum
