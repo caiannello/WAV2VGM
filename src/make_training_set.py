@@ -43,7 +43,10 @@ import gzip
 import sys
 from copy import deepcopy
 import os
+from pprint import pprint
 
+# randomize the PRNG
+random.seed(datetime.datetime.now().timestamp())
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
 sfilename = dir_path+'/../training_sets/opl3_training_spects.bin'
@@ -126,7 +129,7 @@ def vecIntToFlt(i, bwid):
 # into an synth configuration vector for the AI. 
 
 vector_elem_labels = [
-  '11f12','10f13','9f12','2f5','1f4','0f4',
+  '11f14','10f13','9f12','2f5','1f4','0f3',
 ]
 
 keyfreq_vec_idxs = None
@@ -183,7 +186,7 @@ def rfToV(rf):
     fmul = rf[0x20|o]&15
     f = rf[0x40|o]
     ws = rf[0xE0|o]&7
-    outlv = f&31
+    outlv = f&63
     ksatnlv = (f>>6)&3
     v.append(vecIntToFlt(fmul,4))
     vector_elem_labels.append('FMul.o'+str(i))
@@ -193,7 +196,13 @@ def rfToV(rf):
     vector_elem_labels.append('OutLv.o'+str(i))
     v.append(vecIntToFlt(ws,3))
     vector_elem_labels.append('WavSel.o'+str(i))
-
+  '''
+  z = zip(vector_elem_labels, v)
+  for i,zi in enumerate(z):
+    a,b = zi
+    print(f'{a:>12}: {b:5.2f}')
+  exit()
+  '''
   return v
 
 # opposite of the above operation, also sets some 
@@ -207,7 +216,7 @@ def initRegFile():
   rf = RF(rf,0x105,0x01)
   for i in range(0,36):
     o=op_reg_ofs[i]
-    rf = RF(rf,0x20|o,0b00100000)    
+    rf = RF(rf,0x20|o,0b00100000)        
     rf = RF(rf,0x60|o,0xff)    
     rf = RF(rf,0x80|o,0x0f)    
   return rf
@@ -218,10 +227,10 @@ def vToRf(v):
   i = 0
   for j in range(0,6):
     i<<=1
-    if v[0+j]>0.5:
+    if v[0+j]>=0.5:
       i|=1
   rf = RF(rf, 0x104, i)
-
+  j=6
   # chan-related things
   # 0xA0: [('FnLow',8)],
   # 0xB0: [(0,2),('KeyOn',1),('Block',3),('FnHi',2)],
@@ -263,8 +272,84 @@ def vToRf(v):
     rf = RF(rf,0xe0|o,wavsel)    
   return rf
 
-# randomize the PRNG
-random.seed(datetime.datetime.now().timestamp())
+
+_2op_chans = {
+   0:[ 0, 3], 1 :[ 1, 4],  2:[ 2, 5],  3:[ 6, 9],
+   4:[ 7,10], 5 :[ 8,11],  6:[12,15],  7:[13,16],
+   8:[14,17], 9 :[18,21], 10:[19,22], 11:[20,23],
+  12:[24,27], 13:[25,28], 14:[26,29], 15:[30,33],
+  16:[31,34], 17:[32,35] }
+
+_4op_chan_combos = [
+  (0,3),
+  (1,4),
+  (2,5),
+  (9,12),
+  (10,13),
+  (11,14),
+]
+
+def combineChans(dc, c0, c1):
+  a = dc[c0]
+  b = dc[c1]
+  c = a+b
+  dc[c0]=c
+  del dc[c1]
+  return dc
+
+# call after changing any of v[0]...v[5]
+def vecGetPermutableIndxs(v):
+  global _2op_chans, _4op_chan_combos
+  chans = deepcopy(_2op_chans)
+  # based on v[0]...v[5] determine available channels
+  # and which operators are associated with each.
+  for i in range(0,6):
+    if v[i] >= 0.5:
+      c0,c1 = _4op_chan_combos[5-i]
+      chans = combineChans(chans,c0,c1)
+
+  print(v[0:6],chans)
+
+  idxs = {}
+  keyons = {}
+  lvls = {}
+  for c in chans:
+    idxs[c]=[]    
+    keyons[c]=[]
+    lvls[c]=[]
+    # include indexes of fields relevant to this channel
+    s = f'.c{c}'
+    for vi,lbl in enumerate(vector_elem_labels):
+      if lbl.endswith(s):
+        if 'KeyOn' in lbl:
+          keyons[c].append(vi)
+        else:
+          idxs[c].append(vi)
+    # and each of the operators
+    opidxs = chans[c]
+    for oi in opidxs:
+      s = f'.o{oi}'
+      for vi,lbl in enumerate(vector_elem_labels):
+        if lbl.endswith(s):
+          idxs[c].append(vi)
+          if 'OutLv' in lbl:
+            lvls[c].append(vi)
+
+  return idxs,keyons,lvls
+
+'''
+for i in [0,1]:
+  rf = initRegFile()
+  rf = RF(rf,0x104,i)
+  v = rfToV(rf)
+  print(i,v[0:6])
+  r = vecGetPermutableIndxs(v)
+  for c in r:
+    vv = r[c]
+    print(c,vv)
+
+exit()
+'''
 
 reinit_freq = 100  # bigger means less chance of resetting the opl to defaults
 OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to an operator
@@ -325,12 +410,24 @@ def plotSpectrum(spec, gcolor=(255,255,255)):
 # -----------------------------------------------------------------------------
 # draw a mono 16-bit sound waveform in yellow
 # -----------------------------------------------------------------------------
+minwave =  99999999
+maxwave = -99999999
+
 def plotWaveform(wave):
-  global screen,ww,hh
+  global screen,ww,hh,minwave,maxwave
   ll = len(wave)
   for i in range(0,ll-1):
-    s0 = int(wave[i])
+    s0 = int(wave[i])    
     s1 = int(wave[i+1])
+    if s0<minwave:
+      minwave = s0
+    if s1<minwave:
+      minwave = s1
+    if s0>maxwave:
+      maxwave = s0
+    if s1>maxwave:
+      maxwave = s1
+
     x0=int(i*ww/ll)
     x1=int((i+1)*ww/ll)    
     y0=int((s0+32768)*hh/65536)
@@ -427,7 +524,22 @@ def main():
   lastszmb = -1
   iters=0
   perms_this_mode = 0
-  REINIT_PERIOD = 1000
+  REINIT_PERIOD = 100000
+
+  fuzzchan = 0 #random.randint(0,17)
+  permidxs,keyons,lvls = vecGetPermutableIndxs(opl_vec)
+  permidxs = permidxs[fuzzchan]
+  keyons = keyons[fuzzchan]
+  lvls = lvls[fuzzchan]
+  print(f'Initial fuzz channel: {fuzzchan}')
+  print(permidxs)
+  print(keyons)
+  print(lvls)  
+  for ko in keyons:
+    opl_vec[ko] = 1.0
+  #for lo in lvls:
+  #  opl_vec[lo] = 0 #random.random()*0.2
+
   while True:
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  # Usually wise to be able to close your program.
@@ -435,13 +547,31 @@ def main():
         sfile.close()
         return 
 
-    if (random.randint(0,5)<2) and (keyfreq_vec_idxs is not None):  
-      # more likely to change a key freq than whatever else
-      x = random.choice(keyfreq_vec_idxs)
+    x = random.choice(permidxs)
+    if (random.random() < 0.05):
+      #if x in lvls:
+      #  opl_vec[x] = random.random()*0.2
+      #else:
+      opl_vec[x] = random.random()
     else:
-      x = random.randint(0,vl-1)
+      o = (random.random()*0.05) - 0.025
+      o = opl_vec[x] + o
+      if o<0.0:
+        o=0.0
+      elif o>1.0:
+        o=1.0
+      #if x in lvls:
+      #  if o<0.05:
+      #    o=0.05
+      #  elif o > 0.5:
+      #    o=0.5
+      opl_vec[x] = o
+    # todo: sort channels by keyon, frequency, amplitude
+    # to try to standardize the training inputs?
+    # I need to try to figure out how to indicate to the 
+    # model that each spectrum can be made by several equivalent 
+    # synth configs with channels swapped.
 
-    opl_vec[x] = random.random()
     rf = vToRf(opl_vec)
     # render a 4096-point waveform and its spectrum
     waveform, tspect = renderOPLFrame(rf)
@@ -493,7 +623,7 @@ def main():
           if fszmb!=lastszmb: # every 1MB out, show a status update.
             lastszmb = fszmb
             sfsz = f','
-            print(f'iteration: {iters:12d} ({fszmb:d} MB)')
+            print(f'iteration: {iters:12d} ({fszmb:d} MB) {minwave=} {maxwave=}')
             if fszmb >= 20000:  # if we hit 20 GB, stop!
               sfile.close()
               rfile.close()
@@ -505,9 +635,23 @@ def main():
       # or reinit the opl3 registers
       perms_this_mode += 1      
       if  perms_this_mode % REINIT_PERIOD == 0:
-        print(f'Cleanslate.')
         perms_this_mode = 0
+        REINIT_PERIOD = random.randint(10000,500000)
         opl_vec = rfToV(initRegFile())
+        fuzzchan = 0 #random.randint(0,17)
+        print(f'Cleanslate. Switch fuzzed channel to {fuzzchan}')
+        permidxs,keyons,lvls = vecGetPermutableIndxs(opl_vec)
+        permidxs = permidxs[fuzzchan]
+        keyons = keyons[fuzzchan]
+        lvls = lvls[fuzzchan]
+        print(permidxs)
+        print(keyons)
+        print(lvls)          
+        for ko in keyons:
+          opl_vec[ko] = 1.0
+        #for lo in lvls:
+        #  opl_vec[lo] = random.random()*0.2
+
 ###############################################################################
 # ENTRYPOINT
 ###############################################################################

@@ -1027,7 +1027,12 @@ chan_reg_ofs = [
 
 def vecFltToInt(f, bwid):
   mag = (1<<bwid)-1
-  return round(f*mag)
+  i = round(f*mag)
+  if i<0:
+    i=0
+  if i>mag:
+    i=mag
+  return i
 
 # reverse of the above operation
 
@@ -1039,7 +1044,7 @@ def vecIntToFlt(i, bwid):
 # into an synth configuration vector for the AI. 
 
 vector_elem_labels = [
-  '11f12','10f13','9f12','2f5','1f4','0f4',
+  '11f14','10f13','9f12','2f5','1f4','0f3',
 ]
 
 keyfreq_vec_idxs = None

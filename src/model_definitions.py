@@ -11,14 +11,17 @@ class OPL3Model(nn.Module):
         super(OPL3Model, self).__init__()        
         # Convolutional layers
         self.conv_layers = nn.Sequential(
-            nn.Conv1d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2, padding_mode='reflect'),  # First conv layer
+            nn.Conv1d(in_channels=1, out_channels=32, kernel_size=5, stride=1, padding=2, padding_mode='reflect'),  # First conv layer
             nn.ReLU(),
-            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=2, padding_mode='reflect'),  # Second conv layer
+            nn.Conv1d(in_channels=32, out_channels=64, kernel_size=5, stride=1, padding=2, padding_mode='reflect'),  # Second conv layer
             nn.ReLU()
-        )        
+        )
+
+        self.attention = nn.MultiheadAttention(embed_dim=64, num_heads=4, batch_first=True)
+
         # Fully connected layers
         self.model = nn.Sequential(
-            nn.Linear(32 * 2048, 2048),  # Adjusted input size for flattened Conv1d output
+            nn.Linear(64 * 2048, 2048),  # Adjusted input size for flattened Conv1d output
             nn.BatchNorm1d(2048),
             nn.ReLU(),
             nn.Linear(2048, 4096),
@@ -45,11 +48,21 @@ class OPL3Model(nn.Module):
         # Reshape input to add a channel dimension for Conv1d layers
         x = x.unsqueeze(1)  # Shape becomes [batch_size, 1, 2048]  
         # Pass through convolutional layers
-        x = self.conv_layers(x)        
+        x = self.conv_layers(x) 
+        
+        # Prepare for attention by permuting to (batch_size, sequence_length, features)
+        x = x.permute(0, 2, 1)  # Shape becomes (batch_size, 2048, 32)
+
+        # Apply multi-head attention (self-attention) where query, key, and value are all `x`
+        attn_output, _ = self.attention(x, x, x)  # Shape: (batch_size, 2048, 32)
+        
+        # Flatten the output from the attention layer for dense layers
+        attn_output = attn_output.reshape(attn_output.size(0), -1)  # Shape: (batch_size, 32 * 2048)
+
         # Flatten the output from the Conv1d layers
-        x = x.view(x.size(0), -1)  # Shape becomes [batch_size, 32 * 2048]        
+        #x = x.view(x.size(0), -1)  # Shape becomes [batch_size, 32 * 2048]        
         # Pass through the fully connected layers
-        x = self.model(x)        
+        x = self.model(attn_output)        
         return x
 # ------------------------------------------------------------------------
 # Dataset Class - gets individual records from the training files

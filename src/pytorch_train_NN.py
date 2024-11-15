@@ -29,7 +29,6 @@ device = torch.device(devname)
 
 dir_path            = os.path.dirname(os.path.realpath(__file__))
 
-
 # Parameters
 
 spect_filepath      = dir_path+'/../training_sets/bopl3_training_spects.bin'  # training test data
