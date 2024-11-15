@@ -9,16 +9,14 @@ an VGM file that uses OPL3 synthesis to recreate the original sound.
 Examples are provided demonstrating famous speeches as well as a 
 conversion of a classic arcade tune from YM2151 (OPM) to YMF262M! (OPL3)
 
-The original method works surprisingly well. It converts the input sound to 
-a spectrogram, detects peak frequencies, and makes a set of OPL3 
-instructions to play these peaks as a sum of pure sine waves of varying
-amplitudes.
+- NEWS! - 2024-11-14
 
-Work is underway to leverage neural networks to produce more sophisticated
-synthesizer configurations for a given input: Code is provided to produce 
-training sets (random OPL3 register settings and resulting spectra), and 
-to train the AI model from these data. This isn't yet sounding even
-remotely close, yet. (Still learning the AI ropes.)
+I found a really crappy bug today that was throwing away HALF of the
+available synth channels and corrupting the remaining ones! She's 
+sounding a lot better now, so I had to update all the examples. 
+The AI experiments are still underway, and training is going better. 
+(I think that bug as confusing the neural network, too.) I'm hopeful
+we'll see some 2-op and 4-op goodness pretty soon!
 
 Directory Content:
   
