@@ -313,10 +313,12 @@ def vecGetPermutableIndxs(v):
   idxs = {}
   keyons = {}
   lvls = {}
+  freqs = {}  
   for c in chans:
     idxs[c]=[]    
     keyons[c]=[]
     lvls[c]=[]
+    freqs[c]=[]
     # include indexes of fields relevant to this channel
     s = f'.c{c}'
     for vi,lbl in enumerate(vector_elem_labels):
@@ -325,6 +327,8 @@ def vecGetPermutableIndxs(v):
           keyons[c].append(vi)
         else:
           idxs[c].append(vi)
+        if 'Freq' in lbl:
+          freqs[c].append(vi)
     # and each of the operators
     opidxs = chans[c]
     for oi in opidxs:
@@ -335,7 +339,7 @@ def vecGetPermutableIndxs(v):
           if 'OutLv' in lbl:
             lvls[c].append(vi)
 
-  return idxs,keyons,lvls
+  return idxs,keyons,lvls,freqs
 
 '''
 for i in [0,1]:
@@ -524,17 +528,20 @@ def main():
   lastszmb = -1
   iters=0
   perms_this_mode = 0
-  REINIT_PERIOD = 100000
+  REINIT_PERIOD = 10000000
 
   fuzzchan = 0 #random.randint(0,17)
-  permidxs,keyons,lvls = vecGetPermutableIndxs(opl_vec)
+  permidxs,keyons,lvls,freqs = vecGetPermutableIndxs(opl_vec)
   permidxs = permidxs[fuzzchan]
   keyons = keyons[fuzzchan]
   lvls = lvls[fuzzchan]
+  freqs = freqs[fuzzchan]
   print(f'Initial fuzz channel: {fuzzchan}')
-  print(permidxs)
-  print(keyons)
-  print(lvls)  
+  print('permutables',permidxs)
+  print('keyons',keyons)
+  print('lvls',lvls)      
+  print('freqs',freqs)
+
   for ko in keyons:
     opl_vec[ko] = 1.0
   #for lo in lvls:
@@ -547,7 +554,11 @@ def main():
         sfile.close()
         return 
 
-    x = random.choice(permidxs)
+    if random.random()<0.01:
+      x = random.choice(permidxs)
+    else:
+      x = random.choice(freqs)
+
     if (random.random() < 0.05):
       #if x in lvls:
       #  opl_vec[x] = random.random()*0.2
@@ -640,15 +651,24 @@ def main():
         opl_vec = rfToV(initRegFile())
         fuzzchan = 0 #random.randint(0,17)
         print(f'Cleanslate. Switch fuzzed channel to {fuzzchan}')
-        permidxs,keyons,lvls = vecGetPermutableIndxs(opl_vec)
-        permidxs = permidxs[fuzzchan]
-        keyons = keyons[fuzzchan]
-        lvls = lvls[fuzzchan]
-        print(permidxs)
-        print(keyons)
-        print(lvls)          
-        for ko in keyons:
-          opl_vec[ko] = 1.0
+        didit = False
+        while not didit:
+          permidxs,keyons,lvls = vecGetPermutableIndxs(opl_vec)
+          permidxs = permidxs[fuzzchan]
+          keyons = keyons[fuzzchan]
+          lvls = lvls[fuzzchan]
+          freqs = freqs[fuzzchan]
+          print('permutables',permidxs)
+          print('keyons',keyons)
+          print('lvls',lvls)      
+          print('freqs',freqs)
+          try:    
+            for ko in keyons:            
+              opl_vec[ko] = 1.0
+            didit=True
+          except:
+            print('Keyonswitch failed')
+            pass
         #for lo in lvls:
         #  opl_vec[lo] = random.random()*0.2
 
