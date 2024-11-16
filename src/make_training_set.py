@@ -46,8 +46,8 @@ import os
 from pprint import pprint
 
 
-DISPLAY_INTERVAL = 10        # permutations per display refresh
-REINIT_PERIOD = 10000000    # permutations per resetting the OPL to defaults
+DISPLAY_INTERVAL = 10     # permutations per display refresh
+REINIT_PERIOD = 100000    # permutations per resetting the OPL to defaults
 
 # display window width and height
 ww=1920 
@@ -639,7 +639,7 @@ def main():
   
   fsz = ssize
   lastszmb = -1
-  iters=0
+  iters=ssize//2048
   perms_this_mode = 0
 
   fbumpdir = 1
@@ -651,42 +651,22 @@ def main():
         sfile.close()
         return 
 
-    if random.random()<0.01:
-      x = random.choice(permidxs)
-    else:
+    if random.random()<0.98:
       x = random.choice(freqs)
-
-    if (random.random() < 0.01) and (not x in freqs):
-      #if x in lvls:
-      #  opl_vec[x] = random.random()*0.2
-      #else:
-      opl_vec[x] = random.random()
-    else:
-      if x in freqs:
-        o = opl_vec[x]
-        o += fbumpdir*0.0005
-        if o>1.0:
-          o=1.0
-          fbumpdir = -fbumpdir
-        elif o<0.0:
-          o=0.0
-          fbumpdir = -fbumpdir
-        #f = o*OPL3_MAX_FREQ
-        #print(f'freq {f}')
-        opl_vec[x] = o
-      else:
-        nbits = vector_elem_bits[x]
-        iv = vecFltToInt(opl_vec[x],nbits)
-        if random.random()>=0.5:
-          iv+=1
-        else:
-          iv-=0
-        opl_vec[x] = vecIntToFlt(iv,nbits)
-    # todo: sort channels by keyon, frequency, amplitude
-    # to try to standardize the training inputs?
-    # I need to try to figure out how to indicate to the 
-    # model that each spectrum can be made by several equivalent 
-    # synth configs with channels swapped.
+      o = opl_vec[x]
+      o += fbumpdir * 0.0005
+      if o>1.0:
+        o=1.0
+        fbumpdir = -1
+      elif o<0.0:
+        o=0.0
+        fbumpdir = 1
+      opl_vec[x] = o
+    else:  
+      x = random.choice(permidxs)
+      opl_vec[x]=random.random()
+      if x in lvls:
+        opl_vec[x]/=32
 
     rf = vToRf(opl_vec)
     # render a 4096-point waveform and its spectrum
@@ -739,7 +719,10 @@ def main():
           if fszmb!=lastszmb: # every 1MB out, show a status update.
             lastszmb = fszmb
             sfsz = f','
-            print(f'iteration: {iters:12d} ({fszmb:d} MB), wave_min/max: {wave_low}/{wave_high}, bin_min/max: {dbin_low}/{dbin_high}')
+            l = f'iteration: {iters:12d} ({fszmb:d} MB), samp min/max:({wave_low},{wave_high}), bin min/max:({dbin_low},{dbin_high}), cur_lvls:['
+            for x in lvls:
+              l += f'{opl_vec[x]:4.2f},'            
+            print(l[0:-1]+']')
             if fszmb >= 20000:  # if we hit 20 GB, stop!
               sfile.close()
               rfile.close()
