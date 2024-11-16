@@ -45,6 +45,15 @@ from copy import deepcopy
 import os
 from pprint import pprint
 
+
+DISPLAY_INTERVAL = 10        # permutations per display refresh
+REINIT_PERIOD = 10000000    # permutations per resetting the OPL to defaults
+
+# display window width and height
+ww=1920 
+hh=1080
+
+
 # randomize the PRNG
 random.seed(datetime.datetime.now().timestamp())
 dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -86,9 +95,6 @@ If the files aren't the right sizes though, they'll get overwritten!
 Now Starting...
 ''')
 # -----------------------------------------------------------------------------
-# display window width and height
-ww=1920 
-hh=1080
 # init pygame for graphics
 pygame.init()
 screen=pygame.display.set_mode([ww,hh])#,flags=pygame.FULLSCREEN)
@@ -111,50 +117,185 @@ chan_reg_ofs = [
   0x100, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x108
 ]
 
+# First six names of the OPL3 configuration vector. 
+# (The other 216 names are the first time we
+# convert a an OPL3 register array into a 
+# float32[222] synth configuration vector using the
+# rfToV() function.
+
+vector_elem_labels = [
+  '11f14','10f13','9f12','2f5','1f4','0f3',
+]
+
+# like the above, but the bit-width of each field 
+# as it is in the opl registers
+vector_elem_bits = [
+  1,1,1,1,1,1
+]
+
+# which two operators are assigned to each channel
+# in 2-op mode.
+
+_2op_chans = {
+   0:[ 0, 3], 1 :[ 1, 4],  2:[ 2, 5],  3:[ 6, 9],
+   4:[ 7,10], 5 :[ 8,11],  6:[12,15],  7:[13,16],
+   8:[14,17], 9 :[18,21], 10:[19,22], 11:[20,23],
+  12:[24,27], 13:[25,28], 14:[26,29], 15:[30,33],
+  16:[31,34], 17:[32,35] }
+
+# which channels can be paired into a single 
+# 4-op channel
+
+_4op_chan_combos = [
+  (0,3),    # Makes 4-op channel 0, channel 3 goes away
+  (1,4),
+  (2,5),
+  (9,12),
+  (10,13),
+  (11,14),
+]
+
+# things used to convert between frequency in Hz and 
+# the OPL3 equivalent: (uint10 fnum, uint3 block)
+max_freq_per_block = [48.503,97.006,194.013,388.026,776.053,1552.107,3104.215,6208.431]
+fsamp = 14318181.0/288.0
+
+
+make_labels = True  # True until we have named all vector elements
+
+reinit_freq = 100  # bigger means less chance of resetting the opl to defaults
+OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to an operator
+
+# min/max when plotting spectrum bins onscreen
+MAX_DB = 0
+MIN_DB = -150.0
+
+# Statistics covering all iterations ----------------------
+
+# bin bounds of spect after converting it to dbFS. (decibels of full scale)
+
+dbin_high = -9999999
+dbin_low  =  9999999
+
+# waveform min/max seen coming out of the OPL3 emulator. 
+
+wave_high = -9999999
+wave_low  =  9999999
+
+# used by the code to combine two 2-op channels
+# in dc dict, c0 and c1, into a single 4-op 
+# channel at c0.  Channel c1 is goes away.
+
+def combineChans(dc, c0, c1):
+  a = dc[c0]
+  b = dc[c1]
+  c = a+b
+  dc[c0]=c
+  del dc[c1]
+  return dc
+
+# given a frequency in Hz, converts it to the OPL3
+# equivalent:  (uint10 fnum, uint3 block)
+def freqToFNumBlk(freq):
+  global max_freq_per_block, fsamp
+  for block,maxfreq in enumerate(max_freq_per_block):
+    if maxfreq>=freq:
+      break
+  fnum = round(freq*pow(2,19)/fsamp/pow(2,block-1))
+  return fnum,block
+
+# inverse of the above
+def fNumBlkToFreq(fnum, block):
+  freq = fnum/(pow(2,19)/fsamp/pow(2,block-1))
+  return freq
+
 # given a float vector element f, with range [0.0,1.0], and a 
 # desired width in bits, rescales the float to an integer of 
 # that size.
 
 def vecFltToInt(f, bwid):
   mag = (1<<bwid)-1
-  return round(f*mag)
+  i = round(f*mag)
+  if i<0:
+    i=0
+  elif i>mag:
+    i=mag
+  return i
 
 # reverse of the above operation
 
 def vecIntToFlt(i, bwid):
   mag = (1<<bwid)-1
-  return float(i/mag)
+  f = float(i/mag)
+  if f<0.0:
+    f=0.0
+  elif f>1.0:
+    f=1.0
+  return f
 
-# Convert regions of interest from an OPL3 register file
-# into an synth configuration vector for the AI. 
+# the first time through rfToV(), this fcn
+# is used to note vector element names.
 
-vector_elem_labels = [
-  '11f14','10f13','9f12','2f5','1f4','0f3',
-]
+def nameVecElem(s,bwid):
+  global make_labels, vector_elem_labels, vector_elem_bits
+  if make_labels:
+    vector_elem_labels.append(s)
+    vector_elem_bits.append(bwid)
 
-keyfreq_vec_idxs = None
+# Convert regions of interest from a 512-byte 
+# OPL3 register file into float32[222] synth configuration
+# vector for use during AI training and infrerencing. 
+#
+# The first time though, we also build an array of what 
+# each vector element is named: 
+# (e.g. fnum+block for channel 0 gets called "Freq.c0" 
+# operator 3 output level gets called "OutLv.o3")
 
 def rfToV(rf):
-  global op_reg_ofs, chan_reg_ofs, keyfreq_vec_idxs
-  note_freqs = False
-  if keyfreq_vec_idxs is None:
-    note_freqs = True
-    keyfreq_vec_idxs = []
+  global op_reg_ofs, chan_reg_ofs, make_labels, OPL3_MAX_FREQ
+  #
+  # Chip wide things start off our vector:
+  #
+  # one cfg reg (at 0x104) has six bits in it which become 
+  # the first six elements of the vector:
+  #
+  # 0x104: bit 5 : '11f14', bit 4 : '10f13', bit 3 :'9f12',
+  #        bit 2 : '2f5',   bit 1 : '1f4',   bit 0 :'0f3'
+  #
+  # Setting a bit will pair the two, 2-op channels indicated by
+  # the name into a single 4-op channel.
+  #
+  # e.g. bit zero becomes vector elemment 5, and if set, that
+  # element will have a value of 1.0, and synth channels 0 & 3
+  # are to be combined into a single 4-operator channel 0.
+  #
+
   v=[]
-  # one chip-wide cfg reg becomes 6 vector elements
-  # 0x104: [(0,2),('11f12',1),('10f13',1),('9f12',1),('2f5',1),('1f4',1),('0f4',1)], # sets to 4-op the indicated channel pair
   b = rf[0x104]
   mask = 0b00100000
   while mask:
     if b & mask:
-      v.append(1.0)
+      v.append(1.0)  # vectorizing the high bit first
     else:
       v.append(0.0)
     mask>>=1
-  # chan-related things
-  # 0xA0: [('FnLow',8)],
+  #
+  # Channel-related things come next:
+  #
+  # 0xA0: [('FnLow',8)],  
   # 0xB0: [(0,2),('KeyOn',1),('Block',3),('FnHi',2)],
+  #
+  # three of the above (fnum hi/low and block) get 
+  # concatenated to make one vector element called 
+  # "frequency" which controls the channel frequency.
+  #
   # 0xC0: [('OutD',1),('OutC',1),('OutR',1),('OutL',1),('FbFct',3),('SnTyp',1)]  
+  #
+  # we are hardcoding the fist four fields of this (controls
+  # output speaker) and so they arent included in the vector.
+  # This is done to simplify things since we're doing only 
+  # mono sounds.
+  #
   for i in range(0,18):
     o = chan_reg_ofs[i]
     flow = rf[0xA0|o]
@@ -164,23 +305,29 @@ def rfToV(rf):
     block = (b>>2)&7
     keyon = (b>>5)&1
     sntype = c&1
-    fbcnt = (c>>1)&3
-    freq = flow|(fhi<<8)|(block<<10)
+    fbcnt = (c>>1)&7
+    fnum = flow|(fhi<<8)
+    freq = fNumBlkToFreq(fnum, block)
     v.append(float(keyon))
-    vector_elem_labels.append('KeyOn.c'+str(i))
-    if note_freqs:
-      keyfreq_vec_idxs.append(len(v))
-    v.append(vecIntToFlt(freq,13))
-    vector_elem_labels.append('Freq.c'+str(i))
+    nameVecElem('KeyOn.c'+str(i),1)
+    v.append(freq / OPL3_MAX_FREQ)
+    nameVecElem('Freq.c'+str(i),13)
     v.append(vecIntToFlt(fbcnt,3))
-    vector_elem_labels.append('FbCnt.c'+str(i))
+    nameVecElem('FbCnt.c'+str(i),3)
     v.append(float(sntype))
-    vector_elem_labels.append('SnTyp.c'+str(i))
-  # op-related_things:
+    nameVecElem('SnTyp.c'+str(i),1)
+  #
+  # Operator related things come last:
+  #
   # 0x20: [('Trem',1),('Vibr',1),('Sust',1),('KSEnvRt',1),('FMul',4)],
   # 0x40: [('KSAtnLv',2),('OutLv',6)],
-  # 0x60: [('AttRt',4),('DcyRt',4)],
-  # 0x80: [('SusLv',4),('RelRt',4)],  
+  # 0xE0: [('_',5),'WavSel':3]
+  #
+  # # 0x60: [('AttRt',4),('DcyRt',4)],
+  # # 0x80: [('SusLv',4),('RelRt',4)],
+  #
+  # Envelope related (0x60 and 0x80) are not vectorized 
+  # and are instead hard-coded in our app.
   for i in range(0,36):
     o=op_reg_ofs[i]
     fmul = rf[0x20|o]&15
@@ -189,41 +336,70 @@ def rfToV(rf):
     outlv = f&63
     ksatnlv = (f>>6)&3
     v.append(vecIntToFlt(fmul,4))
-    vector_elem_labels.append('FMul.o'+str(i))
+    nameVecElem('FMul.o'+str(i),4)    # operator phase multiple
     v.append(vecIntToFlt(ksatnlv,2))
-    vector_elem_labels.append('KSAtnLv.o'+str(i))    
+    nameVecElem('KSAtnLv.o'+str(i),2) # attenuation of higher freqs
     v.append(vecIntToFlt(outlv,6))
-    vector_elem_labels.append('OutLv.o'+str(i))
+    nameVecElem('OutLv.o'+str(i),6)   # overall attenuation
     v.append(vecIntToFlt(ws,3))
-    vector_elem_labels.append('WavSel.o'+str(i))
-  '''
+    nameVecElem('WavSel.o'+str(i),3)  # waveform selection 0..7
+
+  make_labels = False   # all vector elements were named.  
+  return v
+
+# Show label:value of each element of the
+# specified float32[222] vector.
+
+def showVector(v):
+  global vector_elem_labels
   z = zip(vector_elem_labels, v)
+  j = 0
+  l=''
+  print('------------------------------- [')
   for i,zi in enumerate(z):
     a,b = zi
-    print(f'{a:>12}: {b:5.2f}')
-  exit()
-  '''
-  return v
+    l+=f'{a:>12}: {b:5.2f}, '
+    j+=1
+    if j>5:
+      j=0
+      print(l)
+      l=''
+  if len(l):
+    print(l)
+  print('] -------------------------------')
+
+
 
 # opposite of the above operation, also sets some 
 # defaults that don't concern the AI.
 def RF(rf, idx, v):
   return rf[0:idx] + struct.pack('B',v) + rf[idx+1:]
 
+# Returns initial synth settings as a 512-byte OPL3
+# register value file.
+#
+# We hard-code certain things for our application:
+# all envelopes rates are set to fastest rate, 
+# sustain level set to loudest, and sustain and 
+# OPL3 mode are enabled.
 
 def initRegFile():
   rf = b'\0'*512
   rf = RF(rf,0x105,0x01)
   for i in range(0,36):
     o=op_reg_ofs[i]
-    rf = RF(rf,0x20|o,0b00100000)        
-    rf = RF(rf,0x60|o,0xff)    
-    rf = RF(rf,0x80|o,0x0f)    
+    rf = RF(rf,0x20|o,0b00100000)   # enable sustain
+    rf = RF(rf,0x60|o,0xff)   # fast envelopes
+    rf = RF(rf,0x80|o,0x0f)   # sustain level to loudeest
   return rf
 
+# Converts a float[222] synth configuration vector
+# into a 512-byte OPL3 register array
 def vToRf(v):
-  global op_reg_ofs, chan_reg_ofs
+  global op_reg_ofs, chan_reg_ofs, OPL3_MAX_FREQ
   rf = initRegFile()
+
+  # chipwide things (0..5)
   i = 0
   for j in range(0,6):
     i<<=1
@@ -231,33 +407,26 @@ def vToRf(v):
       i|=1
   rf = RF(rf, 0x104, i)
   j=6
-  # chan-related things
-  # 0xA0: [('FnLow',8)],
-  # 0xB0: [(0,2),('KeyOn',1),('Block',3),('FnHi',2)],
-  # 0xC0: [('OutD',1),('OutC',1),('OutR',1),('OutL',1),('FbFct',3),('SnTyp',1)]  
+
+  # channel-related things
   for i in range(0,18):
     o = chan_reg_ofs[i]
     keyon = 1 if v[j+0] >= 0.5 else 0
-    freq = vecFltToInt(v[j+1],13)
+    freq = v[j+1]
     fbcnt = vecFltToInt(v[j+2],3)
     sntyp = 1 if v[j+3] >= 0.5 else 0
     j+=4
-    flow = freq&0xff
-    freq>>=8
-    fhi = freq&3
-    freq>>=2
-    blk = freq&7
-    blk>>=3
-    sntyp = freq&1
+
+    
+    fnum, blk = freqToFNumBlk( freq * OPL3_MAX_FREQ )
+    flow = fnum&0xff
+    fhi = (fnum>>8)&3
+
     rf = RF(rf,0xA0|o,flow)
     rf = RF(rf,0xB0|o,(keyon<<5)|(blk<<2)|fhi)
     rf = RF(rf,0xC0|o,0b00110000 | (fbcnt<<1) | sntyp)
 
-  # op-related_things:
-  # 0x20: [('Trem',1),('Vibr',1),('Sust',1),('KSEnvRt',1),('FMul',4)],
-  # 0x40: [('KSAtnLv',2),('OutLv',6)],
-  # 0x60: [('AttRt',4),('DcyRt',4)],
-  # 0x80: [('SusLv',4),('RelRt',4)],  
+  # operator-related_things:
   for i in range(0,36):
     o=op_reg_ofs[i]
     fmul = vecFltToInt(v[j+0],4)
@@ -272,32 +441,10 @@ def vToRf(v):
     rf = RF(rf,0xe0|o,wavsel)    
   return rf
 
-
-_2op_chans = {
-   0:[ 0, 3], 1 :[ 1, 4],  2:[ 2, 5],  3:[ 6, 9],
-   4:[ 7,10], 5 :[ 8,11],  6:[12,15],  7:[13,16],
-   8:[14,17], 9 :[18,21], 10:[19,22], 11:[20,23],
-  12:[24,27], 13:[25,28], 14:[26,29], 15:[30,33],
-  16:[31,34], 17:[32,35] }
-
-_4op_chan_combos = [
-  (0,3),
-  (1,4),
-  (2,5),
-  (9,12),
-  (10,13),
-  (11,14),
-]
-
-def combineChans(dc, c0, c1):
-  a = dc[c0]
-  b = dc[c1]
-  c = a+b
-  dc[c0]=c
-  del dc[c1]
-  return dc
-
 # call after changing any of v[0]...v[5]
+# to get what synth cfg vector element indices will 
+# have any effect on the output sound
+
 def vecGetPermutableIndxs(v):
   global _2op_chans, _4op_chan_combos
   chans = deepcopy(_2op_chans)
@@ -307,9 +454,6 @@ def vecGetPermutableIndxs(v):
     if v[i] >= 0.5:
       c0,c1 = _4op_chan_combos[5-i]
       chans = combineChans(chans,c0,c1)
-
-  print(v[0:6],chans)
-
   idxs = {}
   keyons = {}
   lvls = {}
@@ -340,41 +484,6 @@ def vecGetPermutableIndxs(v):
             lvls[c].append(vi)
 
   return idxs,keyons,lvls,freqs
-
-'''
-for i in [0,1]:
-  rf = initRegFile()
-  rf = RF(rf,0x104,i)
-  v = rfToV(rf)
-  print(i,v[0:6])
-  r = vecGetPermutableIndxs(v)
-  for c in r:
-    vv = r[c]
-    print(c,vv)
-
-exit()
-'''
-
-reinit_freq = 100  # bigger means less chance of resetting the opl to defaults
-OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to an operator
-
-# min/max when plotting spectrum bins onscreen
-MAX_DB = 0
-MIN_DB = -150.0
-
-# Statistics covering all iterations ----------------------
-
-# bin bounds of spect after converting it to dbFS. (decibels of full scale)
-
-dbin_high = -9999999
-dbin_low  =  9999999
-
-# waveform bounds out of OPL emulator. 
-# After a ron of iterations, for some reason, I'm seeing (-17888,29400) 
-# rather than the expected (-32768,32767).
-
-wave_high = -9999999
-wave_low  =  9999999
 
 # -----------------------------------------------------------------------------
 # draw a single spectrum
@@ -414,37 +523,18 @@ def plotSpectrum(spec, gcolor=(255,255,255)):
 # -----------------------------------------------------------------------------
 # draw a mono 16-bit sound waveform in yellow
 # -----------------------------------------------------------------------------
-minwave =  99999999
-maxwave = -99999999
 
 def plotWaveform(wave):
-  global screen,ww,hh,minwave,maxwave
+  global screen,ww,hh
   ll = len(wave)
   for i in range(0,ll-1):
     s0 = int(wave[i])    
     s1 = int(wave[i+1])
-    if s0<minwave:
-      minwave = s0
-    if s1<minwave:
-      minwave = s1
-    if s0>maxwave:
-      maxwave = s0
-    if s1>maxwave:
-      maxwave = s1
-
     x0=int(i*ww/ll)
     x1=int((i+1)*ww/ll)    
     y0=int((s0+32768)*hh/65536)
     y1=int((s1+32768)*hh/65536)
     pygame.draw.line(screen, (255,255,0), (x0,y0),(x1,y1))
-# -----------------------------------------------------------------------------
-def showRegs(opl_regs):  
-  keys = list(opl_regs.keys())
-  keys.sort()
-  for k in keys:
-    (b,r)=k
-    v=opl_regs[k]
-    print(f'({b},${r:02X}): ${v:02X}')
 # -----------------------------------------------------------------------------
 # Setup the OPL emulator with the specified register values, generate 4096 
 # audio samples, and return resultant frequency spectrum.
@@ -483,7 +573,6 @@ def renderOPLFrame(regfile):
     spec = spec.spectrogram[0]
   else:
     spec  = None
-    #showregs(opl_regs)
   # return waveform and spectrogram, if any
   return wave, spec
 
@@ -491,14 +580,39 @@ def renderOPLFrame(regfile):
 # main loop
 # -----------------------------------------------------------------------------
 def main():
-  global rawbin_high, wave_low, wave_high, reinit_freq
-  global ww,hh
+  global rawbin_high, wave_low, wave_high, dbin_low, dbin_high
+  global reinit_freq, ww,hh, vector_elem_bits
+  global REINIT_PERIOD, DISPLAY_INTERVAL
 
+  # init config vector
   j=0
   opl_vec = rfToV(initRegFile())
   vl = len(opl_vec)
-  print(f'vector length: {vl}')
 
+  # pick one channel to fuzz, for now.
+
+  # see what elements are permutable per each channel
+  permidxs,keyons,lvls,freqs = vecGetPermutableIndxs(opl_vec)
+
+  fuzzchan = 0 #random.randint(0,17)
+  print(f'Channnel to fuzz: {fuzzchan}')
+  
+  permidxs = permidxs[fuzzchan]   # permutable vector elems for selected chan(s)
+  lvls = lvls[fuzzchan]           # operator attenuation levels
+  freqs = freqs[fuzzchan]         # channel frequency setting(s)
+  keyons = keyons[fuzzchan]       # channel key-on setting(s)
+  for ko in keyons:     # ensure keyon is set for selected channel(s)
+    opl_vec[ko] = 1.0
+
+  print('all permutables: ',permidxs)
+  print('  op atten. lvs: ',lvls)      
+  print('   chan. keyons: ',keyons)
+  print('    chan. freqs: ',freqs)
+
+  print(f'\nInitial float32[{len(opl_vec)}] Config. Vector:')
+  showVector(opl_vec)
+
+  # check for training file
   try:
     ssize = os.path.getsize(sfilename)
     rsize = os.path.getsize(rfilename)
@@ -524,28 +638,11 @@ def main():
     # all the way to the end bore commencing the hourslong AI training
   
   fsz = ssize
-  ic = reinit_freq  # reinitialization countdown
   lastszmb = -1
   iters=0
   perms_this_mode = 0
-  REINIT_PERIOD = 10000000
 
-  fuzzchan = 0 #random.randint(0,17)
-  permidxs,keyons,lvls,freqs = vecGetPermutableIndxs(opl_vec)
-  permidxs = permidxs[fuzzchan]
-  keyons = keyons[fuzzchan]
-  lvls = lvls[fuzzchan]
-  freqs = freqs[fuzzchan]
-  print(f'Initial fuzz channel: {fuzzchan}')
-  print('permutables',permidxs)
-  print('keyons',keyons)
-  print('lvls',lvls)      
-  print('freqs',freqs)
-
-  for ko in keyons:
-    opl_vec[ko] = 1.0
-  #for lo in lvls:
-  #  opl_vec[lo] = 0 #random.random()*0.2
+  fbumpdir = 1
 
   while True:
     for event in pygame.event.get():
@@ -559,24 +656,32 @@ def main():
     else:
       x = random.choice(freqs)
 
-    if (random.random() < 0.05):
+    if (random.random() < 0.01) and (not x in freqs):
       #if x in lvls:
       #  opl_vec[x] = random.random()*0.2
       #else:
       opl_vec[x] = random.random()
     else:
-      o = (random.random()*0.05) - 0.025
-      o = opl_vec[x] + o
-      if o<0.0:
-        o=0.0
-      elif o>1.0:
-        o=1.0
-      #if x in lvls:
-      #  if o<0.05:
-      #    o=0.05
-      #  elif o > 0.5:
-      #    o=0.5
-      opl_vec[x] = o
+      if x in freqs:
+        o = opl_vec[x]
+        o += fbumpdir*0.0005
+        if o>1.0:
+          o=1.0
+          fbumpdir = -fbumpdir
+        elif o<0.0:
+          o=0.0
+          fbumpdir = -fbumpdir
+        #f = o*OPL3_MAX_FREQ
+        #print(f'freq {f}')
+        opl_vec[x] = o
+      else:
+        nbits = vector_elem_bits[x]
+        iv = vecFltToInt(opl_vec[x],nbits)
+        if random.random()>=0.5:
+          iv+=1
+        else:
+          iv-=0
+        opl_vec[x] = vecIntToFlt(iv,nbits)
     # todo: sort channels by keyon, frequency, amplitude
     # to try to standardize the training inputs?
     # I need to try to figure out how to indicate to the 
@@ -619,7 +724,7 @@ def main():
 
 
       j+=1
-      if j==10:  # show every 10th set on screen
+      if j==DISPLAY_INTERVAL:  # show every 10th set on screen
         j=0        
         try:
           pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
@@ -634,7 +739,7 @@ def main():
           if fszmb!=lastszmb: # every 1MB out, show a status update.
             lastszmb = fszmb
             sfsz = f','
-            print(f'iteration: {iters:12d} ({fszmb:d} MB) {minwave=} {maxwave=}')
+            print(f'iteration: {iters:12d} ({fszmb:d} MB), wave_min/max: {wave_low}/{wave_high}, bin_min/max: {dbin_low}/{dbin_high}')
             if fszmb >= 20000:  # if we hit 20 GB, stop!
               sfile.close()
               rfile.close()
@@ -649,28 +754,15 @@ def main():
         perms_this_mode = 0
         REINIT_PERIOD = random.randint(10000,500000)
         opl_vec = rfToV(initRegFile())
+        permidxs,keyons,lvls,freqs = vecGetPermutableIndxs(opl_vec)
         fuzzchan = 0 #random.randint(0,17)
-        print(f'Cleanslate. Switch fuzzed channel to {fuzzchan}')
-        didit = False
-        while not didit:
-          permidxs,keyons,lvls = vecGetPermutableIndxs(opl_vec)
-          permidxs = permidxs[fuzzchan]
-          keyons = keyons[fuzzchan]
-          lvls = lvls[fuzzchan]
-          freqs = freqs[fuzzchan]
-          print('permutables',permidxs)
-          print('keyons',keyons)
-          print('lvls',lvls)      
-          print('freqs',freqs)
-          try:    
-            for ko in keyons:            
-              opl_vec[ko] = 1.0
-            didit=True
-          except:
-            print('Keyonswitch failed')
-            pass
-        #for lo in lvls:
-        #  opl_vec[lo] = random.random()*0.2
+        print(f'Channnel to fuzz: {fuzzchan}')    
+        permidxs = permidxs[fuzzchan]   # permutable vector elems for selected chan(s)
+        lvls = lvls[fuzzchan]           # operator attenuation levels
+        freqs = freqs[fuzzchan]         # channel frequency setting(s)
+        keyons = keyons[fuzzchan]       # channel key-on setting(s)
+        for ko in keyons:     # ensure keyon is set for selected channel(s)
+          opl_vec[ko] = 1.0
 
 ###############################################################################
 # ENTRYPOINT
