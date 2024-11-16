@@ -49,6 +49,92 @@ OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to a voice (fnum, block)
 SPECT_VERT_SCALE = 3  # set max vert spect axis to 7350 Hz max rather than the orig 22050 Hz  
 GENE_MAX_GENERATIONS = 500
 # -----------------------------------------------------------------------------
+
+# each operator (indexes [0..35]) has a specific byte-offset to
+# locate it within various sections of the opl3 register bank.
+#
+# Notice how these are NOT CONTINUOUS!  (Caused me some headaches!)  
+
+op_reg_ofs = [ 
+  0x000,  0x001,  0x002,  0x003,  0x004,  0x005,  0x008,  0x009,  0x00A,  # bank 0
+  0x00B,  0x00C,  0x00D,  0x010,  0x011,  0x012,  0x013,  0x014,  0x015,
+  0x100,  0x101,  0x102,  0x103,  0x104,  0x105,  0x108,  0x109,  0x10A,  # bank 1 (OPL3 only)
+  0x10B,  0x10C,  0x10D,  0x110,  0x111,  0x112,  0x113,  0x114,  0x115,
+  ]
+
+chan_reg_ofs = [
+  0x000, 0x001, 0x002, 0x003, 0x004, 0x005, 0x006, 0x007, 0x008, 
+  0x100, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x108
+]
+
+# First six names of the OPL3 configuration vector's
+# elements. (Used with AI stuff) (The other 216 names
+# are made the first time we convert an OPL3 register
+# array into a float32[222] synth configuration vector
+# using the rfToV() function.
+
+vector_elem_labels = [
+  '11f14','10f13','9f12','2f5','1f4','0f3',
+]
+
+make_labels = True  # True until we have named all vector elements
+
+# like the above, but the bit-width of each field
+# as it is in the opl registers
+vector_elem_bits = [
+  1,1,1,1,1,1
+]
+
+# which two operators are assigned to each channel
+# in 2-op mode.
+
+_2op_chans = {
+   0:[ 0, 3], 1 :[ 1, 4],  2:[ 2, 5],  3:[ 6, 9],
+   4:[ 7,10], 5 :[ 8,11],  6:[12,15],  7:[13,16],
+   8:[14,17], 9 :[18,21], 10:[19,22], 11:[20,23],
+  12:[24,27], 13:[25,28], 14:[26,29], 15:[30,33],
+  16:[31,34], 17:[32,35] }
+
+# which channels can be paired into a single 
+# 4-op channel
+
+_4op_chan_combos = [
+  (0,3),    # Makes 4-op channel 0, channel 3 goes away
+  (1,4),
+  (2,5),
+  (9,12),
+  (10,13),
+  (11,14),
+]
+
+# these two objects are redundant and should be removed,
+# (the whole deterministic wav2vgm code can be cleaned
+# up a whole lot! )
+
+regofs = [  # one not accounting for bank
+0x00,0x01,0x02,0x03,
+0x04,0x05,0x0a,0x0b,
+0x0c,0x0d,0x10,0x11,
+0x12,0x13,0x14,0x15,
+0x00,0x01,0x02,0x03,
+0x04,0x05,0x0a,0x0b,
+0x0c,0x0d,0x10,0x11,
+0x12,0x13,0x14,0x15,
+]
+
+# these are the operator indexes per each of the 18 output channels
+# in 2-op mode.
+opidxs_per_chan = [
+  (0,3),(1,4),(2,5),(6,9),(7,10),(8,11),(12,15),(13,16),(14,17),
+  (18,21),(19,22),(20,23),(24,27),(25,28),(26,29),(30,33),(31,34),(32,35)]
+
+
+# things used to convert between frequency in Hz and 
+# the OPL3 equivalent: (uint10 fnum, uint3 block)
+
+max_freq_per_block = [48.503,97.006,194.013,388.026,776.053,1552.107,3104.215,6208.431]
+fsamp = 14318181.0/288.0
+
 # todo: make folders we need which don't exist
 tmpfolder = 'temp/'
 infolder = 'input/'
@@ -501,34 +587,6 @@ def playWave():
   while pygame.mixer.get_busy(): 
     pygame.time.Clock().tick(10)         
 # -----------------------------------------------------------------------------
-# Start of OPL3 stuff
-# -----------------------------------------------------------------------------
-max_freq_per_block = [48.503,97.006,194.013,388.026,776.053,1552.107,3104.215,6208.431]
-fsamp = 14318181.0/288.0
-
-regofs = [
-0x00,0x01,0x02,0x03,
-0x04,0x05,0x0a,0x0b,
-0x0c,0x0d,0x10,0x11,
-0x12,0x13,0x14,0x15,
-0x00,0x01,0x02,0x03,
-0x04,0x05,0x0a,0x0b,
-0x0c,0x0d,0x10,0x11,
-0x12,0x13,0x14,0x15,
-]
-
-# these are the operator indexes per each of the 18 output channels
-# in 2-op mode.
-opidxs_per_chan = [
-  (0,3),(1,4),(2,5),(6,9),(7,10),(8,11),(12,15),(13,16),(14,17),
-  (18,21),(19,22),(20,23),(24,27),(25,28),(26,29),(30,33),(31,34),(32,35)]
-
-def opsToOfs(opidx0,opidx1):
-  global regofs
-  if opidx0>=18:
-    opidx0-=18
-    opidx1-=18
-  return (regofs[opidx0],regofs[opidx1])
 
 def opToOfs(opidx):
   global regofs
@@ -1004,22 +1062,20 @@ def fitfunc(ospect,regfile):
   return math.sqrt(dif), tspect
 ##############################
 ##############################
-# each operator (indexes [0..35]) has a specific byte-offset to
-# locate it within various sections of the opl3 register bank.
-#
-# Notice how these are NOT CONTINUOUS!  (Caused me some headaches!)  
+# given a frequency in Hz, converts it to the OPL3
+# equivalent:  (uint10 fnum, uint3 block)
+def freqToFNumBlk(freq):
+  global max_freq_per_block, fsamp
+  for block,maxfreq in enumerate(max_freq_per_block):
+    if maxfreq>=freq:
+      break
+  fnum = round(freq*pow(2,19)/fsamp/pow(2,block-1))
+  return fnum,block
 
-op_reg_ofs = [ 
-  0x000,  0x001,  0x002,  0x003,  0x004,  0x005,  0x008,  0x009,  0x00A,  # bank 0
-  0x00B,  0x00C,  0x00D,  0x010,  0x011,  0x012,  0x013,  0x014,  0x015,
-  0x100,  0x101,  0x102,  0x103,  0x104,  0x105,  0x108,  0x109,  0x10A,  # bank 1 (OPL3 only)
-  0x10B,  0x10C,  0x10D,  0x110,  0x111,  0x112,  0x113,  0x114,  0x115,
-  ]
-
-chan_reg_ofs = [
-  0x000, 0x001, 0x002, 0x003, 0x004, 0x005, 0x006, 0x007, 0x008, 
-  0x100, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x108
-]
+# inverse of the above
+def fNumBlkToFreq(fnum, block):
+  freq = fnum/(pow(2,19)/fsamp/pow(2,block-1))
+  return freq
 
 # given a float vector element f, with range [0.0,1.0], and a 
 # desired width in bits, rescales the float to an integer of 
@@ -1030,7 +1086,7 @@ def vecFltToInt(f, bwid):
   i = round(f*mag)
   if i<0:
     i=0
-  if i>mag:
+  elif i>mag:
     i=mag
   return i
 
@@ -1038,38 +1094,76 @@ def vecFltToInt(f, bwid):
 
 def vecIntToFlt(i, bwid):
   mag = (1<<bwid)-1
-  return float(i/mag)
+  f = float(i/mag)
+  if f<0.0:
+    f=0.0
+  elif f>1.0:
+    f=1.0
+  return f
 
-# Convert regions of interest from an OPL3 register file
-# into an synth configuration vector for the AI. 
+# the first time through rfToV(), this fcn
+# is used to note vector element names.
 
-vector_elem_labels = [
-  '11f14','10f13','9f12','2f5','1f4','0f3',
-]
+def nameVecElem(s,bwid):
+  global make_labels, vector_elem_labels, vector_elem_bits
+  if make_labels:
+    vector_elem_labels.append(s)
+    vector_elem_bits.append(bwid)
 
-keyfreq_vec_idxs = None
+# Convert regions of interest from a 512-byte 
+# OPL3 register file into float32[222] synth configuration
+# vector for use during AI training and infrerencing. 
+#
+# The first time though, we also build an array of what 
+# each vector element is named: 
+# (e.g. fnum+block for channel 0 gets called "Freq.c0" 
+# operator 3 output level gets called "OutLv.o3")
 
 def rfToV(rf):
-  global op_reg_ofs, chan_reg_ofs, keyfreq_vec_idxs
-  note_freqs = False
-  if keyfreq_vec_idxs is None:
-    note_freqs = True
-    keyfreq_vec_idxs = []
+  global op_reg_ofs, chan_reg_ofs, make_labels, OPL3_MAX_FREQ
+  #
+  # Chip wide things start off our vector:
+  #
+  # one cfg reg (at 0x104) has six bits in it which become 
+  # the first six elements of the vector:
+  #
+  # 0x104: bit 5 : '11f14', bit 4 : '10f13', bit 3 :'9f12',
+  #        bit 2 : '2f5',   bit 1 : '1f4',   bit 0 :'0f3'
+  #
+  # Setting a bit will pair the two, 2-op channels indicated by
+  # the name into a single 4-op channel.
+  #
+  # e.g. bit zero becomes vector elemment 5, and if set, that
+  # element will have a value of 1.0, and synth channels 0 & 3
+  # are to be combined into a single 4-operator channel 0.
+  #
+
   v=[]
-  # one chip-wide cfg reg becomes 6 vector elements
-  # 0x104: [(0,2),('11f12',1),('10f13',1),('9f12',1),('2f5',1),('1f4',1),('0f4',1)], # sets to 4-op the indicated channel pair
   b = rf[0x104]
   mask = 0b00100000
   while mask:
     if b & mask:
-      v.append(1.0)
+      v.append(1.0)  # vectorizing the high bit first
     else:
       v.append(0.0)
     mask>>=1
-  # chan-related things
-  # 0xA0: [('FnLow',8)],
+  #
+  # Channel-related things come next:
+  #
+  # 0xA0: [('FnLow',8)],  
   # 0xB0: [(0,2),('KeyOn',1),('Block',3),('FnHi',2)],
+  #
+  # three of the above (fnum hi/low and block) get 
+  # concatenated to make one vector element called 
+  # "frequency" which controls the channel frequency.
+  #
   # 0xC0: [('OutD',1),('OutC',1),('OutR',1),('OutL',1),('FbFct',3),('SnTyp',1)]  
+  #
+  # we are hardcoding the fist four fields of this (controls
+  # output speaker) and so they arent included in the vector.
+  # This is done to simplify things since we're doing only 
+  # mono sounds.
+  #
   for i in range(0,18):
     o = chan_reg_ofs[i]
     flow = rf[0xA0|o]
@@ -1079,94 +1173,128 @@ def rfToV(rf):
     block = (b>>2)&7
     keyon = (b>>5)&1
     sntype = c&1
-    fbcnt = (c>>1)&3
-    freq = flow|(fhi<<8)|(block<<10)
+    fbcnt = (c>>1)&7
+    fnum = flow|(fhi<<8)
+    freq = fNumBlkToFreq(fnum, block)
     v.append(float(keyon))
-    vector_elem_labels.append('KeyOn.c'+str(i))
-    if note_freqs:
-      keyfreq_vec_idxs.append(len(v))
-    v.append(vecIntToFlt(freq,13))
-    vector_elem_labels.append('Freq.c'+str(i))
+    nameVecElem('KeyOn.c'+str(i),1)
+    v.append(freq / OPL3_MAX_FREQ)
+    nameVecElem('Freq.c'+str(i),13)
     v.append(vecIntToFlt(fbcnt,3))
-    vector_elem_labels.append('FbCnt.c'+str(i))
+    nameVecElem('FbCnt.c'+str(i),3)
     v.append(float(sntype))
-    vector_elem_labels.append('SnTyp.c'+str(i))
-  # op-related_things:
+    nameVecElem('SnTyp.c'+str(i),1)
+  #
+  # Operator related things come last:
+  #
   # 0x20: [('Trem',1),('Vibr',1),('Sust',1),('KSEnvRt',1),('FMul',4)],
   # 0x40: [('KSAtnLv',2),('OutLv',6)],
-  # 0x60: [('AttRt',4),('DcyRt',4)],
-  # 0x80: [('SusLv',4),('RelRt',4)],  
+  # 0xE0: [('_',5),'WavSel':3]
+  #
+  # # 0x60: [('AttRt',4),('DcyRt',4)],
+  # # 0x80: [('SusLv',4),('RelRt',4)],
+  #
+  # Envelope related (0x60 and 0x80) are not vectorized 
+  # and are instead hard-coded in our app.
   for i in range(0,36):
     o=op_reg_ofs[i]
     fmul = rf[0x20|o]&15
     f = rf[0x40|o]
     ws = rf[0xE0|o]&7
-    outlv = f&31
+    outlv = f&63
     ksatnlv = (f>>6)&3
     v.append(vecIntToFlt(fmul,4))
-    vector_elem_labels.append('FMul.o'+str(i))
+    nameVecElem('FMul.o'+str(i),4)    # operator phase multiple
     v.append(vecIntToFlt(ksatnlv,2))
-    vector_elem_labels.append('KSAtnLv.o'+str(i))    
+    nameVecElem('KSAtnLv.o'+str(i),2) # attenuation of higher freqs
     v.append(vecIntToFlt(outlv,6))
-    vector_elem_labels.append('OutLv.o'+str(i))
+    nameVecElem('OutLv.o'+str(i),6)   # overall attenuation
     v.append(vecIntToFlt(ws,3))
-    vector_elem_labels.append('WavSel.o'+str(i))
+    nameVecElem('WavSel.o'+str(i),3)  # waveform selection 0..7
 
+  make_labels = False   # all vector elements were named.  
   return v
+
+# Show label:value of each element of the
+# specified float32[222] vector.
+
+def showVector(v):
+  global vector_elem_labels
+  z = zip(vector_elem_labels, v)
+  j = 0
+  l=''
+  print('------------------------------- [')
+  for i,zi in enumerate(z):
+    a,b = zi
+    l+=f'{a:>12}: {b:5.2f}, '
+    j+=1
+    if j>5:
+      j=0
+      print(l)
+      l=''
+  if len(l):
+    print(l)
+  print('] -------------------------------')
+
+
 
 # opposite of the above operation, also sets some 
 # defaults that don't concern the AI.
 def RF(rf, idx, v):
   return rf[0:idx] + struct.pack('B',v) + rf[idx+1:]
 
+# Returns initial synth settings as a 512-byte OPL3
+# register value file.
+#
+# We hard-code certain things for our application:
+# all envelopes rates are set to fastest rate, 
+# sustain level set to loudest, and sustain and 
+# OPL3 mode are enabled.
 
 def initRegFile():
   rf = b'\0'*512
   rf = RF(rf,0x105,0x01)
   for i in range(0,36):
     o=op_reg_ofs[i]
-    rf = RF(rf,0x20|o,0b00100000)    
-    rf = RF(rf,0x60|o,0xff)    
-    rf = RF(rf,0x80|o,0x0f)    
+    rf = RF(rf,0x20|o,0b00100000)   # enable sustain
+    rf = RF(rf,0x60|o,0xff)   # fast envelopes
+    rf = RF(rf,0x80|o,0x0f)   # sustain level to loudeest
   return rf
 
+# Converts a float[222] synth configuration vector
+# into a 512-byte OPL3 register array
 def vToRf(v):
-  global op_reg_ofs, chan_reg_ofs
+  global op_reg_ofs, chan_reg_ofs, OPL3_MAX_FREQ
   rf = initRegFile()
+
+  # chipwide things (0..5)
   i = 0
   for j in range(0,6):
     i<<=1
-    if v[0+j]>0.5:
+    if v[0+j]>=0.5:
       i|=1
   rf = RF(rf, 0x104, i)
+  j=6
 
-  # chan-related things
-  # 0xA0: [('FnLow',8)],
-  # 0xB0: [(0,2),('KeyOn',1),('Block',3),('FnHi',2)],
-  # 0xC0: [('OutD',1),('OutC',1),('OutR',1),('OutL',1),('FbFct',3),('SnTyp',1)]  
+  # channel-related things
   for i in range(0,18):
     o = chan_reg_ofs[i]
     keyon = 1 if v[j+0] >= 0.5 else 0
-    freq = vecFltToInt(v[j+1],13)
+    freq = v[j+1]
     fbcnt = vecFltToInt(v[j+2],3)
     sntyp = 1 if v[j+3] >= 0.5 else 0
     j+=4
-    flow = freq&0xff
-    freq>>=8
-    fhi = freq&3
-    freq>>=2
-    blk = freq&7
-    blk>>=3
-    sntyp = freq&1
+
+    
+    fnum, blk = freqToFNumBlk( freq * OPL3_MAX_FREQ )
+    flow = fnum&0xff
+    fhi = (fnum>>8)&3
+
     rf = RF(rf,0xA0|o,flow)
     rf = RF(rf,0xB0|o,(keyon<<5)|(blk<<2)|fhi)
     rf = RF(rf,0xC0|o,0b00110000 | (fbcnt<<1) | sntyp)
 
-  # op-related_things:
-  # 0x20: [('Trem',1),('Vibr',1),('Sust',1),('KSEnvRt',1),('FMul',4)],
-  # 0x40: [('KSAtnLv',2),('OutLv',6)],
-  # 0x60: [('AttRt',4),('DcyRt',4)],
-  # 0x80: [('SusLv',4),('RelRt',4)],  
+  # operator-related_things:
   for i in range(0,36):
     o=op_reg_ofs[i]
     fmul = vecFltToInt(v[j+0],4)
@@ -1180,6 +1308,7 @@ def vToRf(v):
     rf = RF(rf,0x80|o,0x0f)    
     rf = RF(rf,0xe0|o,wavsel)    
   return rf
+
 
 ##############################
 ##############################
