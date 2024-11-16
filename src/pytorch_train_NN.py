@@ -35,7 +35,7 @@ spect_filepath      = dir_path+'/../training_sets/bopl3_training_spects.bin'  # 
 synthcfg_filepath   = dir_path+'/../training_sets/bopl3_training_regs.bin'    # training truth truth
 model_filepath      = dir_path+'/../models/torch_model.pth'                  # trained model output
 batch_size = 32
-epochs = 50
+epochs = 4        # 50   keep this low until we settle on the dataset and model
 early_stopping_patience = 5
 
 print('''
@@ -47,8 +47,12 @@ print('''
   match.
   ''')
 
+# TODO: Allow resumption of training on a preexisting 
+# model, but wipe it and start over if the model changed.
+
 # Load dataset and split into training and validation sets
 # (getter defined in model_definitions.py)
+
 full_dataset = OPL3Dataset(spect_filepath, synthcfg_filepath)
 dataset_size = len(full_dataset)
 val_size = int(0.2 * dataset_size)

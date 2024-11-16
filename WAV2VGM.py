@@ -28,8 +28,6 @@ from scipy import signal
 import torch
 import torch.nn as nn  
 
-#import pyopl  # OPL3 emulator from DosBox
-
 from src import spect as sp
 from src.OPL3 import OPL3
 from src import gene                # Import 
@@ -40,7 +38,6 @@ random.seed(datetime.datetime.now().timestamp())
 # -----------------------------------------------------------------------------
 screen_width=1920 
 screen_height=1080
-origspect=None
 #SLICE_FREQ = 86.1328125  # frequency at which the synth parameters are altered
                          # (exactly two specra per synth frame)
 SLICE_FREQ = 91.552734375   # old setting for arduino
@@ -50,62 +47,11 @@ SPECT_VERT_SCALE = 3  # set max vert spect axis to 7350 Hz max rather than the o
 GENE_MAX_GENERATIONS = 500
 # -----------------------------------------------------------------------------
 
-# each operator (indexes [0..35]) has a specific byte-offset to
-# locate it within various sections of the opl3 register bank.
-#
-# Notice how these are NOT CONTINUOUS!  (Caused me some headaches!)  
 
-op_reg_ofs = [ 
-  0x000,  0x001,  0x002,  0x003,  0x004,  0x005,  0x008,  0x009,  0x00A,  # bank 0
-  0x00B,  0x00C,  0x00D,  0x010,  0x011,  0x012,  0x013,  0x014,  0x015,
-  0x100,  0x101,  0x102,  0x103,  0x104,  0x105,  0x108,  0x109,  0x10A,  # bank 1 (OPL3 only)
-  0x10B,  0x10C,  0x10D,  0x110,  0x111,  0x112,  0x113,  0x114,  0x115,
-  ]
+# opl emulator, register data, and helper functions for converting
+# between binary and float32[] config vector for AI training and inference
 
-chan_reg_ofs = [
-  0x000, 0x001, 0x002, 0x003, 0x004, 0x005, 0x006, 0x007, 0x008, 
-  0x100, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x108
-]
-
-# First six names of the OPL3 configuration vector's
-# elements. (Used with AI stuff) (The other 216 names
-# are made the first time we convert an OPL3 register
-# array into a float32[222] synth configuration vector
-# using the rfToV() function.
-
-vector_elem_labels = [
-  '11f14','10f13','9f12','2f5','1f4','0f3',
-]
-
-make_labels = True  # True until we have named all vector elements
-
-# like the above, but the bit-width of each field
-# as it is in the opl registers
-vector_elem_bits = [
-  1,1,1,1,1,1
-]
-
-# which two operators are assigned to each channel
-# in 2-op mode.
-
-_2op_chans = {
-   0:[ 0, 3], 1 :[ 1, 4],  2:[ 2, 5],  3:[ 6, 9],
-   4:[ 7,10], 5 :[ 8,11],  6:[12,15],  7:[13,16],
-   8:[14,17], 9 :[18,21], 10:[19,22], 11:[20,23],
-  12:[24,27], 13:[25,28], 14:[26,29], 15:[30,33],
-  16:[31,34], 17:[32,35] }
-
-# which channels can be paired into a single 
-# 4-op channel
-
-_4op_chan_combos = [
-  (0,3),    # Makes 4-op channel 0, channel 3 goes away
-  (1,4),
-  (2,5),
-  (9,12),
-  (10,13),
-  (11,14),
-]
+opl3 = OPL3()
 
 # these two objects are redundant and should be removed,
 # (the whole deterministic wav2vgm code can be cleaned
@@ -128,18 +74,13 @@ opidxs_per_chan = [
   (0,3),(1,4),(2,5),(6,9),(7,10),(8,11),(12,15),(13,16),(14,17),
   (18,21),(19,22),(20,23),(24,27),(25,28),(26,29),(30,33),(31,34),(32,35)]
 
-
-# things used to convert between frequency in Hz and 
-# the OPL3 equivalent: (uint10 fnum, uint3 block)
-
-max_freq_per_block = [48.503,97.006,194.013,388.026,776.053,1552.107,3104.215,6208.431]
-fsamp = 14318181.0/288.0
-
 # todo: make folders we need which don't exist
 tmpfolder = 'temp/'
 infolder = 'input/'
 outfolder = 'output/'
 modelsfolder = "models/"
+
+origspect=None
 
 pygame.init()
 try:
@@ -587,131 +528,9 @@ def playWave():
   while pygame.mixer.get_busy(): 
     pygame.time.Clock().tick(10)         
 # -----------------------------------------------------------------------------
-
 def opToOfs(opidx):
   global regofs
   return regofs[opidx]
-
-# -----------------------------------------------------------------------------
-# given a freq in hz, returns the OPL3 F-Num and Blocknum needed to achieve it.
-# -----------------------------------------------------------------------------
-def getFnumBlock(freq):
-  for block,maxfreq in enumerate(max_freq_per_block):
-    if maxfreq>=freq:
-      break
-  fnum = round(freq*pow(2,19)/fsamp/pow(2,block-1))
-  return fnum,block
-# -----------------------------------------------------------------------------
-# inverse of above function
-# -----------------------------------------------------------------------------
-def getFreq(fnum, block):
-  return fnum/(pow(2,19)/fsamp/pow(2,block-1))
-# -----------------------------------------------------------------------------
-def showRegDict(opl_reg_dict):
-    keys = list(opl_reg_dict.keys())
-    keys.sort()
-    for (b,r) in keys:
-      v = opl_reg_dict[(b,r)]
-      print(f'    {b},${r:02X} : ${v:02X}')  
-# -----------------------------------------------------------------------------
-# Setup the OPL emulator with the specified register values, generate 4096 
-# audio samples, and return resultant frequency spectrum.
-# -----------------------------------------------------------------------------
-def renderOPLFrame(opl_cfg):  
-  o = OPL3()
-  o.do_init()
-  if isinstance(opl_cfg,dict):
-    for (b,r) in opl_cfg:
-      v = opl_cfg[(b,r)]
-      o.write(b,r,v)
-  else:
-    o.writeregfile(opl_cfg)
-  o._output = bytes()
-  o._render_samples(4096)  
-  w = []
-  for i in range(0,len(o._output),4):
-    l=struct.unpack('<h',o._output[i:i+2])[0]
-    r=struct.unpack('<h',o._output[i+2:i+4])[0]
-    w.append((l+r)//2)
-  w = np.array(w, dtype="int16")
-  if w.sum():
-    newspect = sp.spect(wav_filename = None, sample_rate=44100,samples=w,nperseg=4096, quiet=True)
-  else:
-    newspect  = None    
-    #showRegDict(opl_cfg)
-  return newspect
-# -----------------------------------------------------------------------------
-# $001        %00100000
-# $105        %00000001
-# $008        %00000000
-# $0BD        %00000000 - percussion currently unused
-# $X60...$X75 %11111111 - ADSR stuff, currently fixed to be always-on.
-# $X80...$X95 %00001111 - 
-#
-# $104        %00CCCCCC - 2op / 4op selection bits
-#
-# per-operator settings (22*2 operators) ------
-#
-# $X20...$X35:%0010MMMM 
-# $X40...$X55 %KKTTTTTT - ksl atten, total level
-# $XE0...$XF5 %00000WWW - waveform sel
-#
-# per-channel settings (9*2 channels) -----
-# 
-# $XA0...$XA8 %FFFFFFFF - fnum low
-# $XB0...$XB8 %00KBBBFF - keyon, block, fnum hi
-# $XC0...$XC8 %1111FFFC - feedback, connection set
-
-# -----------------------------------------------------------------------------
-# regfile indexes [0...512) known to have a function in OPL3
-# -----------------------------------------------------------------------------
-permutable_regidxs = [0x104]
-
-permutable_splits = { 0x104:[('_','00'),('4o0',1),('4o1',1),('4o2',1),('4o3',1),('4o4',1),('4o5',1)]}
-
-for i in range(0,0x16):
-  permutable_regidxs.append(0x020+i)
-  permutable_splits[0x020+i] = [('_',"0010"),('OMulA',4)]
-  permutable_regidxs.append(0x120+i)
-  permutable_splits[0x120+i] = [('_',"0010"),('OMulB',4)]
-  permutable_regidxs.append(0x040+i)
-  permutable_splits[0x040+i] = [('KSLA',2),('TlvA',6)]
-  permutable_regidxs.append(0x140+i)
-  permutable_splits[0x140+i] = [('KSLB',2),('TlvB',6)]
-  permutable_regidxs.append(0x0E0+i)
-  permutable_splits[0x0E0+i] = [('_',"00000"),('WavA',3)]
-  permutable_regidxs.append(0x1E0+i)
-  permutable_splits[0x1E0+i] = [('_',"00000"),('WavB',3)]
-
-for i in range(0,0x09):
-  permutable_regidxs.append(0x0A0+i)
-  permutable_splits[0x0A0+i] = [('FnLA',8)]
-
-  permutable_regidxs.append(0x1A0+i)
-  permutable_splits[0x1A0+i] = [('FnLB',8)]
-
-  permutable_regidxs.append(0x0B0+i)
-  permutable_splits[0x0B0+i] = [('_',"00"),('KonA',1),('BlkA',3),('FnHA',2)]
-
-  permutable_regidxs.append(0x1B0+i)
-  permutable_splits[0x1B0+i] = [('_',"00"),('KonB',1),('BlkB',3),('FnHB',2)]
-
-  permutable_regidxs.append(0x0C0+i)
-  permutable_splits[0x0C0+i] = [('_',"1111"),('FbA',3),('CcB',1)]
-
-  permutable_regidxs.append(0x1C0+i)
-  permutable_splits[0x1C0+i] = [('_',"1111"),('FbB',3),('CcB',1)]
-
-permutable_regidxs.sort()
-
-permute_counts = {}
-for i,ridx in enumerate(permutable_regidxs):  
-  b = (ridx>>8)&1
-  r = ridx&0xff
-  for si,(ll,bb) in enumerate(permutable_splits[ridx]):
-    if ll!='_':
-      permute_counts[(b,r,si)] = 0
-
 # -----------------------------------------------------------------------------
 # resets the opl configuration to just the fixed-value parts
 # -----------------------------------------------------------------------------
@@ -730,270 +549,26 @@ def initRegs():
       opl_regs[(b,j+0xB0)] = 0x00
       opl_regs[(b,j+0xC0)] = 0xf0   
   return opl_regs
-
-# $001        %00100000
-# $105        %00000001
-# $008        %00000000
-# $0BD        %00000000 - percussion currently unused
-# $X60...$X75 %11111111 - ADSR stuff, currently fixed to be always-on.
-# $X80...$X95 %00001111 - 
-#
-# $104        %00CCCCCC - 2op / 4op selection bits
-#
-# per-operator settings (22*2 operators) ------
-#
-# $X20...$X35:%0010MMMM 
-# $X40...$X55 %KKTTTTTT - ksl atten, total level
-# $XE0...$XF5 %00000WWW - waveform sel
-#
-# per-channel settings (9*2 channels) -----
-# 
-# $XA0...$XA8 %FFFFFFFF - fnum low
-# $XB0...$XB8 %00KBBBFF - keyon, block, fnum hi
-# $XC0...$XC8 %1111FFFC - feedback, connection set  
 # -----------------------------------------------------------------------------
-# given a byte value, start bit idx [0,7] and end bit idx [0,7]
-# extracts the bit string from byte b and converts it to a float mag [0.0,1.0]
+# genetic algo calls this to impose a mutation on a genome (float32[] cfg vect)
 # -----------------------------------------------------------------------------
-def getBitField(v,lbl,sb,eb):
-  slen = sb-eb
-  mag = (1<<slen)-1
-  v = (v<<(8-sb)) & 0xff
-  v = (v>>(8-slen))
-  r = float(v)/float(mag)
-  #print(f'{lbl=}: {v=} {r=:5.2f}')
-  return r
-
-# -----------------------------------------------------------------------------
-# convert an opl congiguration dict into a vector representation like what was
-# used to training the AI. (Each field gets a float [0.0,1.0] in the vector)
-# -----------------------------------------------------------------------------
-def regDictToVect(opl_regs):
-  global permutable_regidxs, permutable_splits
-  permarray = []
-  for i,ridx in enumerate(permutable_regidxs):
-    b = (ridx>>8) & 1
-    r = ridx & 0xff
-    v = 0
-    if (b,r) in opl_regs:
-      v = opl_regs[(b,r)]
-    sbit = 8
-    for (lbl,bts) in permutable_splits[ridx]:
-      if lbl == '_':
-        sbit-=len(bts)
-      else:
-        ebit = sbit-bts
-        permarray.append(getBitField(v,lbl,sbit,ebit))
-        sbit = ebit
-  return permarray
-# -----------------------------------------------------------------------------
-# convert a float configuration vector into a configuration dictionary
-# -----------------------------------------------------------------------------
-def intToBits(v,nbit):
-  bs = bin(v)[2:]
-  pbs = '0'*(nbit-len(bs))+bs
-  #print(f'      intToBits({v=},{nbit=}): {bs=} {pbs=}')
-  return pbs
-
-def bitsToInt(bs):
-  return int(bs,2)
-
-def insBitsFloat(v,lbl,sbit,nbit,f):
-  #if 'Kon' in lbl:
-  #  print(f'      insBitsFloat({v=},{lbl=},{sbit=},{nbit=},{f=:5.2f}): ',end='')
-  orig = intToBits(v,8)
-  if nbit>1:  
-    mag = (1<<nbit)-1
-    newv = intToBits(round(f*mag),nbit)
-  else:
-    mag = 1
-    newv="0"
-    if f >= 0.45:
-      newv = "1"
-  a = 8-sbit
-  b = a+nbit
-  bs = orig[0:a] + newv[-nbit:] + orig[b:]
-  i = bitsToInt(bs)
-  #if 'Kon' in lbl:
-  #  print(f'{mag=} origv=%{orig} newv=%{newv} {a=} {b=} {bs=} {i=}')
-  return i
-
-def insBitsString(v,sbit,nbit,s):
-  mag = (1<<nbit)-1
-  f = int(s,2)/mag
-  #print(f'      insBitsString({v=},{sbit=},{nbit=},{s=}): {mag=} {f=}')
-  return insBitsFloat(v,'_',sbit,nbit,f)
-
-def vectToRegDict(vec):
-  global permutable_regidxs, permutable_splits
-  regs = initRegs()
-  j=0
-  for i,ridx in enumerate(permutable_regidxs):
-    b = (ridx>>8) & 1
-    r = ridx & 0xff
-    #print(f'vectToRegDict(): ({b},${r:01X}) ',end='')
-    if not (b,r) in regs:
-      regs[(b,r)]=0x00
-      print('(created)')
-    #else:
-    #  print()
-
-    v = 0x00
-    sbit = 8
-    for (lbl,bts) in permutable_splits[ridx]:
-      #print(f'    ({lbl=}:{bts=}):')
-      if lbl == '_':
-        v=insBitsString(v,sbit,len(bts),bts)
-        regs[(b,r)]=v
-        sbit-=len(bts)
-      else:
-        ebit = sbit-bts
-        f = vec[j]
-        j+=1
-        v=insBitsFloat(v,lbl,sbit,sbit-ebit,f)
-        regs[(b,r)]=v
-        sbit = ebit
-
-  return regs
-
-# -----------------------------------------------------------------------------
-def regFileToDict(regfile):
-  regdict = {}
-  for i,v in enumerate(regfile):
-    b = (i>>8)&1
-    r = i&0xff
-    regdict[(b,r)]=v
-  return regdict
-# -----------------------------------------------------------------------------
-def regDictToFile(regdict):
-  sbin = b'\0' * 512
-  for (b,r) in regdict:
-    v = regdict[(b,r)]
-    idx = b*256 + r
-    try:
-      sbin = sbin[0:idx]+struct.pack('B',v)+sbin[idx+1:]
-    except:
-      print(f'{b=} {r=:02X} {v=}')
-      exit()
-  return sbin
-# -----------------------------------------------------------------------------
-# genetic algo calls this to impose a mutation on a genome (opl register file)
-# -----------------------------------------------------------------------------
-def mutatefcn(regfile):
-  global permutable_regidxs
-  regdict = regFileToDict(regfile)
-
+lvls = []
+def mutatefcn(genome):
+  global opl3, lvls
   ncdist = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,3,3,3,3,4,4,5,6,7]
   numchanges = random.choice(ncdist)
-
   for c in range(0,numchanges):
-    j = random.choice(permutable_regidxs)
-    b = (j>>8) & 1      # bank
-    r = j & 0xff        # reg
-    if random.randint(0,5) == 0:  # 20% chance to completely randomize the reg
-      regdict[(b,r)] = random.randint(0,255)
-    else:                         # else do some small shift
-      v = regdict[(b,r)]
-      d = random.randint(0,1)
-      if d==0:
-        d=-1
-      if r==0x04:  # 0x104: six connection sel bits
-        a = random.randint(0,5)
-        v ^= (1<<a)
-      elif r>=0x20 and r<=0x35:
-        m = v & 0b1111
-        m = m + d 
-        if m<0:
-          m=0
-        elif m>15:
-          m=15
-        v = 0b00100000|m
-      elif r>=0x40 and r<=0x55:
-        c = random.randint(0,1)  
-        if c==0:  # ksl - freq atten
-          k = v>>6
-          k=k+d
-          if k<0:
-            k=0
-          elif k>3:
-            k=3
-          v=(v&0b111111)|(k<<6)
-        else:     # tl - total level
-          t = v & 0b111111
-          t+=d
-          if t<0:
-            t=0
-          elif t>0b111111:
-            t=0b111111
-          v = (v&0b11000000) | t
-      elif r>=0xe0 and r<=0xf5:  # waveform
-        v+=d
-        if v>7:  
-          v=7
-        elif v<0:
-          v=0
-      elif (r>=0xa0 and r<=0xa8) or (r>=0xb0 and r<=0xb8):  # f-num: low byte or %00KBBBFF
-        if random.randint(0,3) == 0:  # toggle keyon
-          if r<0xb0:
-            r+=0x10
-          v=v^0b0010000
-        else:    # bump frequency
-          if r<0xb0:
-            ofs = r-0xa0
-          else:
-            ofs = r-0xb0
-          aa = regdict[(b,0xa0+ofs)]
-          bb = regdict[(b,0xb0+ofs)]
-          fnum = aa|((bb&3)<<8)
-          block = (bb>>2)&7
-
-          freq = getFreq(fnum, block)
-          freq +=d
-          if freq<0:
-            freq=0
-          elif freq>OPL3_MAX_FREQ:
-            freq=OPL3_MAX_FREQ
-          fnum,block = getFnumBlock(freq)
-
-          # set both freq regs and keyon and continue
-          regdict[(b,0xa0+ofs)] = fnum&0xff
-          regdict[(b,0xb0+ofs)] = 0b00100000 | ((fnum>>8)&3) | (block<<2)
-          continue
-      elif r>=0xc0 and r<=0xc8:     # 1111FFFC  : feedback, connection sel
-        if random.randint(0,1) == 0:  # bump feedback
-          f=(v>>1)&0b111
-          f+=d
-          if f<0:
-            f=0
-          elif f>7:
-            f=7
-          v=(v&0b11110001) | (f<<1)
-        else:     
-          v=v^1                       # toggle connection sel
-      regdict[(b,r)] = v
-  rf = regDictToFile(regdict)
-  return rf
-# -----------------------------------------------------------------------------
-#one-off setting
-#
-# $104        %00CCCCCC - 2op / 4op selection bits
-#
-# per operator settings
-#
-# $X20...$X35:%0010MMMM - op mult
-# $X40...$X55 %KKTTTTTT - ksl atten, total level
-# $XE0...$XF5 %00000WWW - waveform sel
-#
-# per-channel settings (9*2 channels) -----
-# 
-# $XA0...$XA8 %FFFFFFFF - fnum low
-# $XB0...$XB8 %00KBBBFF - keyon, block, fnum hi
-# $XC0...$XC8 %1111FFFC - feedback, connection set
+    x = random.randint(0,len(genome)-1)
+    if x in lvls:
+      genome[x] = opl3.randomAtten()
+    else:
+      genome[x] = random.random()
+  return genome
 # -----------------------------------------------------------------------------
 # repeatedly calls calls the genetic algorithm's generate() method and shows
 # the current best result.
 #
-# Returns the best register file after max iterations.
+# Returns the best OPL3 configuration vector achieved after max iterations.
 # -----------------------------------------------------------------------------
 def improveMatch(roi, ospect, g):
   global screen,screen_width,screen_height
@@ -1049,269 +624,16 @@ def improveMatch(roi, ospect, g):
 # Renders the opl waveform for the given genome (opl register set), then 
 # returns the difference between its frequency spectrum and ospect, the ideal.
 # -----------------------------------------------------------------------------
-def fitfunc(ospect,regfile):
-  rd = regFileToDict(regfile)
-  tspect = renderOPLFrame(rd)
+def fitfunc(ospect,v):
+  global opl3
+  wave, tspect = opl3.renderOPLFrame(v)
   if tspect is None:
     return 999999999999, None
-  tspect = tspect.spectrogram[0]
   dif = 0
   for i in range(2048):
     a = ospect[i]-tspect[i]
     dif += a*a
   return math.sqrt(dif), tspect
-##############################
-##############################
-# given a frequency in Hz, converts it to the OPL3
-# equivalent:  (uint10 fnum, uint3 block)
-def freqToFNumBlk(freq):
-  global max_freq_per_block, fsamp
-  for block,maxfreq in enumerate(max_freq_per_block):
-    if maxfreq>=freq:
-      break
-  fnum = round(freq*pow(2,19)/fsamp/pow(2,block-1))
-  return fnum,block
-
-# inverse of the above
-def fNumBlkToFreq(fnum, block):
-  freq = fnum/(pow(2,19)/fsamp/pow(2,block-1))
-  return freq
-
-# given a float vector element f, with range [0.0,1.0], and a 
-# desired width in bits, rescales the float to an integer of 
-# that size.
-
-def vecFltToInt(f, bwid):
-  mag = (1<<bwid)-1
-  i = round(f*mag)
-  if i<0:
-    i=0
-  elif i>mag:
-    i=mag
-  return i
-
-# reverse of the above operation
-
-def vecIntToFlt(i, bwid):
-  mag = (1<<bwid)-1
-  f = float(i/mag)
-  if f<0.0:
-    f=0.0
-  elif f>1.0:
-    f=1.0
-  return f
-
-# the first time through rfToV(), this fcn
-# is used to note vector element names.
-
-def nameVecElem(s,bwid):
-  global make_labels, vector_elem_labels, vector_elem_bits
-  if make_labels:
-    vector_elem_labels.append(s)
-    vector_elem_bits.append(bwid)
-
-# Convert regions of interest from a 512-byte 
-# OPL3 register file into float32[222] synth configuration
-# vector for use during AI training and infrerencing. 
-#
-# The first time though, we also build an array of what 
-# each vector element is named: 
-# (e.g. fnum+block for channel 0 gets called "Freq.c0" 
-# operator 3 output level gets called "OutLv.o3")
-
-def rfToV(rf):
-  global op_reg_ofs, chan_reg_ofs, make_labels, OPL3_MAX_FREQ
-  #
-  # Chip wide things start off our vector:
-  #
-  # one cfg reg (at 0x104) has six bits in it which become 
-  # the first six elements of the vector:
-  #
-  # 0x104: bit 5 : '11f14', bit 4 : '10f13', bit 3 :'9f12',
-  #        bit 2 : '2f5',   bit 1 : '1f4',   bit 0 :'0f3'
-  #
-  # Setting a bit will pair the two, 2-op channels indicated by
-  # the name into a single 4-op channel.
-  #
-  # e.g. bit zero becomes vector elemment 5, and if set, that
-  # element will have a value of 1.0, and synth channels 0 & 3
-  # are to be combined into a single 4-operator channel 0.
-  #
-
-  v=[]
-  b = rf[0x104]
-  mask = 0b00100000
-  while mask:
-    if b & mask:
-      v.append(1.0)  # vectorizing the high bit first
-    else:
-      v.append(0.0)
-    mask>>=1
-  #
-  # Channel-related things come next:
-  #
-  # 0xA0: [('FnLow',8)],  
-  # 0xB0: [(0,2),('KeyOn',1),('Block',3),('FnHi',2)],
-  #
-  # three of the above (fnum hi/low and block) get 
-  # concatenated to make one vector element called 
-  # "frequency" which controls the channel frequency.
-  #
-  # 0xC0: [('OutD',1),('OutC',1),('OutR',1),('OutL',1),('FbFct',3),('SnTyp',1)]  
-  #
-  # we are hardcoding the fist four fields of this (controls
-  # output speaker) and so they arent included in the vector.
-  # This is done to simplify things since we're doing only 
-  # mono sounds.
-  #
-  for i in range(0,18):
-    o = chan_reg_ofs[i]
-    flow = rf[0xA0|o]
-    b = rf[0xB0|o]
-    c = rf[0xC0|o]
-    fhi = b&3
-    block = (b>>2)&7
-    keyon = (b>>5)&1
-    sntype = c&1
-    fbcnt = (c>>1)&7
-    fnum = flow|(fhi<<8)
-    freq = fNumBlkToFreq(fnum, block)
-    v.append(float(keyon))
-    nameVecElem('KeyOn.c'+str(i),1)
-    v.append(freq / OPL3_MAX_FREQ)
-    nameVecElem('Freq.c'+str(i),13)
-    v.append(vecIntToFlt(fbcnt,3))
-    nameVecElem('FbCnt.c'+str(i),3)
-    v.append(float(sntype))
-    nameVecElem('SnTyp.c'+str(i),1)
-  #
-  # Operator related things come last:
-  #
-  # 0x20: [('Trem',1),('Vibr',1),('Sust',1),('KSEnvRt',1),('FMul',4)],
-  # 0x40: [('KSAtnLv',2),('OutLv',6)],
-  # 0xE0: [('_',5),'WavSel':3]
-  #
-  # # 0x60: [('AttRt',4),('DcyRt',4)],
-  # # 0x80: [('SusLv',4),('RelRt',4)],
-  #
-  # Envelope related (0x60 and 0x80) are not vectorized 
-  # and are instead hard-coded in our app.
-  for i in range(0,36):
-    o=op_reg_ofs[i]
-    fmul = rf[0x20|o]&15
-    f = rf[0x40|o]
-    ws = rf[0xE0|o]&7
-    outlv = f&63
-    ksatnlv = (f>>6)&3
-    v.append(vecIntToFlt(fmul,4))
-    nameVecElem('FMul.o'+str(i),4)    # operator phase multiple
-    v.append(vecIntToFlt(ksatnlv,2))
-    nameVecElem('KSAtnLv.o'+str(i),2) # attenuation of higher freqs
-    v.append(vecIntToFlt(outlv,6))
-    nameVecElem('OutLv.o'+str(i),6)   # overall attenuation
-    v.append(vecIntToFlt(ws,3))
-    nameVecElem('WavSel.o'+str(i),3)  # waveform selection 0..7
-
-  make_labels = False   # all vector elements were named.  
-  return v
-
-# Show label:value of each element of the
-# specified float32[222] vector.
-
-def showVector(v):
-  global vector_elem_labels
-  z = zip(vector_elem_labels, v)
-  j = 0
-  l=''
-  print('------------------------------- [')
-  for i,zi in enumerate(z):
-    a,b = zi
-    l+=f'{a:>12}: {b:5.2f}, '
-    j+=1
-    if j>5:
-      j=0
-      print(l)
-      l=''
-  if len(l):
-    print(l)
-  print('] -------------------------------')
-
-
-
-# opposite of the above operation, also sets some 
-# defaults that don't concern the AI.
-def RF(rf, idx, v):
-  return rf[0:idx] + struct.pack('B',v) + rf[idx+1:]
-
-# Returns initial synth settings as a 512-byte OPL3
-# register value file.
-#
-# We hard-code certain things for our application:
-# all envelopes rates are set to fastest rate, 
-# sustain level set to loudest, and sustain and 
-# OPL3 mode are enabled.
-
-def initRegFile():
-  rf = b'\0'*512
-  rf = RF(rf,0x105,0x01)
-  for i in range(0,36):
-    o=op_reg_ofs[i]
-    rf = RF(rf,0x20|o,0b00100000)   # enable sustain
-    rf = RF(rf,0x60|o,0xff)   # fast envelopes
-    rf = RF(rf,0x80|o,0x0f)   # sustain level to loudeest
-  return rf
-
-# Converts a float[222] synth configuration vector
-# into a 512-byte OPL3 register array
-def vToRf(v):
-  global op_reg_ofs, chan_reg_ofs, OPL3_MAX_FREQ
-  rf = initRegFile()
-
-  # chipwide things (0..5)
-  i = 0
-  for j in range(0,6):
-    i<<=1
-    if v[0+j]>=0.5:
-      i|=1
-  rf = RF(rf, 0x104, i)
-  j=6
-
-  # channel-related things
-  for i in range(0,18):
-    o = chan_reg_ofs[i]
-    keyon = 1 if v[j+0] >= 0.5 else 0
-    freq = v[j+1]
-    fbcnt = vecFltToInt(v[j+2],3)
-    sntyp = 1 if v[j+3] >= 0.5 else 0
-    j+=4
-
-    
-    fnum, blk = freqToFNumBlk( freq * OPL3_MAX_FREQ )
-    flow = fnum&0xff
-    fhi = (fnum>>8)&3
-
-    rf = RF(rf,0xA0|o,flow)
-    rf = RF(rf,0xB0|o,(keyon<<5)|(blk<<2)|fhi)
-    rf = RF(rf,0xC0|o,0b00110000 | (fbcnt<<1) | sntyp)
-
-  # operator-related_things:
-  for i in range(0,36):
-    o=op_reg_ofs[i]
-    fmul = vecFltToInt(v[j+0],4)
-    ksatnlv = vecFltToInt(v[j+1],2)
-    outlv = vecFltToInt(v[j+2],6)
-    wavsel = vecFltToInt(v[j+3],3)
-    j+=4
-    rf = RF(rf,0x20|o,0b00100000 | fmul)    
-    rf = RF(rf,0x40|o,outlv | (ksatnlv<<6))    
-    rf = RF(rf,0x60|o,0xff)    
-    rf = RF(rf,0x80|o,0x0f)    
-    rf = RF(rf,0xe0|o,wavsel)    
-  return rf
-
-
-##############################
-##############################
 # -----------------------------------------------------------------------------
 # WIP EXPERIMENT- 
 # Tries to brute-force a solution using either a (slow) genetic algorithm or a 
@@ -1322,6 +644,8 @@ def bruteForce(genetic = False, ai = True):
   global screen
   global screen_width
   global screen_height  
+  global opl3
+  global lvls
   ww = int(screen_width)
   hh = int(screen_height//4)
   slen = len(origspect.spectrogram)
@@ -1390,7 +714,7 @@ this message and the READMEs.  Stay Tuned!
       # make prediction
       predicted_output = predicted_output.numpy().flatten()
       # convert output cfg vector to an opl3 register dictionary    
-      regfile = vToRf(predicted_output)
+      regfile = opl3.vToRf(predicted_output)
     # -------------------------------------
 
     # GENETIC ALGORITHM FUN ---------------
@@ -1399,13 +723,15 @@ this message and the READMEs.  Stay Tuned!
       # noting the spectrum we hope to achieve.
       print('Making initial population, please standby...')
       g = gene.gene(1000, ospect, fitfunc)
+      v = opl3.rfToV(opl3.initRegFile())
+      idxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(v,inc_keyons=True)
       for i in range(0,1000):
-        opl_regs = initRegs()
-        for i in permutable_regidxs:
-          b = (i>>8)&1
-          r = i&0xff
-          opl_regs[(b,r)] = random.randint(0,255)
-        genome = regDictToFile(opl_regs)
+        genome = opl3.rfToV(opl3.initRegFile())
+        for x in range(len(v)):
+          if x in lvls:
+            genome[x] = opl3.randomAtten()
+          else:
+            genome[x] = random.random()
         fit, spect = fitfunc(ospect, genome)    
         g.add(i, fit, spect, genome)
       print('ok')
@@ -1415,13 +741,12 @@ this message and the READMEs.  Stay Tuned!
     # -------------------------------------
 
     # give register cfg to opl3 emulator and render a spectrum
-    tspect = renderOPLFrame(regfile)
+    wave, tspect = opl3.renderOPLFrame(regfile)
 
     pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
     plotTestSpect(ospect,-115,0,(255,255,255))   # plot original spect
 
     if tspect is not None: 
-      tspect = tspect.spectrogram[0]
       plotTestSpect(tspect,-115,0,(255,255,0))   # plot spect from predicted config
     
     pygame.display.update()
@@ -1436,24 +761,23 @@ this message and the READMEs.  Stay Tuned!
 # Currently, we set it up to do 18 plain sine waves.
 # -----------------------------------------------------------------------------
 prev_sets = {}
-oplemu = None
 
 def opl3init():
-  global prev_sets, oplemu
+  global prev_sets, opl3
   prev_sets = {}
 
-  oplemu = OPL3()
+  opl3._do_init()
   res = b''
   # enable opl3 mode
   r = 0x05
   v = 0x01
-  oplemu.write(1,r,v);
+  opl3._writeReg(1,r,v);
 
   res+=struct.pack('BBB',0x5f,r,v)
   # enable waveform select
   r = 0x01
   v = 0x20
-  oplemu.write(1,r,v);
+  opl3._writeReg(1,r,v);
   res+=struct.pack('BBB',0x5f,r,v)
 
   for chan in range(0,18):
@@ -1462,54 +786,54 @@ def opl3init():
       # sustain, vibrato,opfreqmult
       r = 0x20 + opToOfs(opidxs[0])
       v = 0x21
-      oplemu.write(0,r,v);
+      opl3._writeReg(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       r = 0x20 + opToOfs(opidxs[1])
       v = 0x21
-      oplemu.write(0,r,v);
+      opl3._writeReg(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # keyscalelevel, output level
       # setting keyscale level to 6.0 dB of attenuation per rise in octave
       # (we really want more than this and need to implement something ourselves)
       r = 0x40 + opToOfs(opidxs[0])
       v = 0x30  # 30
-      oplemu.write(0,r,v);
+      opl3._writeReg(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       r = 0x40 + opToOfs(opidxs[1])
       v = 0x30
-      oplemu.write(0,r,v);
+      opl3._writeReg(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # attack rate, decay rate
       r = 0x60 + opToOfs(opidxs[0])
       v = 0xff
-      oplemu.write(0,r,v);
+      opl3._writeReg(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       r = 0x60 + opToOfs(opidxs[1])
       v = 0xff
-      oplemu.write(0,r,v);
+      opl3._writeReg(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # sust level, release rate
       r = 0x80 + opToOfs(opidxs[0])
       v = 0x0f
-      oplemu.write(0,r,v);
+      opl3._writeReg(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       r = 0x80 + opToOfs(opidxs[1])
       v = 0x0f
-      oplemu.write(0,r,v);
+      opl3._writeReg(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # output channels L&R and additive synth
       r = 0xc0 + chan
       v = 0x31
-      oplemu.write(0,r,v);
+      opl3._writeReg(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       # waveform select sine
       r = 0xe0 + opToOfs(opidxs[0])
       v = 0x00
-      oplemu.write(0,r,v);
+      opl3._writeReg(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
       r = 0xe0 + opToOfs(opidxs[1])
       v = 0x00
-      oplemu.write(0,r,v);
+      opl3._writeReg(0,r,v);
       res+=struct.pack('BBB',0x5e,r,v)
     else:
       chan-=9
@@ -1518,52 +842,52 @@ def opl3init():
       # sustain, vibrato,opfreqmult
       r = 0x20 + a
       v = 0x21
-      oplemu.write(1,r,v);      
+      opl3._writeReg(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       r = 0x20 + b
       v = 0x21
-      oplemu.write(1,r,v);      
+      opl3._writeReg(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       # keyscalelevel, output level
       r = 0x40 + a
       v = 0x30
-      oplemu.write(1,r,v);      
+      opl3._writeReg(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       r = 0x40 + b
       v = 0x30    #  30
-      oplemu.write(1,r,v);      
+      opl3._writeReg(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       # attack rate, decay rate
       r = 0x60 + a
       v = 0xff
-      oplemu.write(1,r,v);      
+      opl3._writeReg(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       r = 0x60 + b
       v = 0xff
-      oplemu.write(1,r,v);      
+      opl3._writeReg(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       # sust level, release rate
       r = 0x80 + a
       v = 0x0f
-      oplemu.write(1,r,v);      
+      opl3._writeReg(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       r = 0x80 + b
       v = 0x0f
-      oplemu.write(1,r,v);      
+      opl3._writeReg(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       # output channels L&R and additive synth
       r = 0xc0 + chan
       v = 0x31
-      oplemu.write(1,r,v);      
+      opl3._writeReg(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       # waveform select sine (todo: use different waveforms when appropriate!)
       r = 0xe0 + a
       v = 0x00
-      oplemu.write(1,r,v);      
+      opl3._writeReg(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
       r = 0xe0 + b
       v = 0x00
-      oplemu.write(1,r,v);      
+      opl3._writeReg(1,r,v);      
       res+=struct.pack('BBB',0x5f,r,v)
   return res
 # -----------------------------------------------------------------------------
@@ -1571,8 +895,8 @@ def opl3init():
 # the specified frequency, volume, and/or key on/off.
 # -----------------------------------------------------------------------------
 def opl3params(freq,namp,chan, keyon):
-  global prev_sets, oplemu
-  fnum, block = getFnumBlock(freq)
+  global prev_sets, opl3
+  fnum, block = opl3.freqToFNumBlk(freq)
   opidxs = opidxs_per_chan[chan]
   res = b''
   schan = chan
@@ -1586,13 +910,13 @@ def opl3params(freq,namp,chan, keyon):
       if chan<9:
         r = 0xb0 + chan
         v = ((fnum>>8)&3) | (block<<2)
-        oplemu.write(0,r,v);              
+        opl3._writeReg(0,r,v);              
         res+=struct.pack('BBB',0x5e,r,v)
       else:
         chan-=9
         r = 0xb0 + chan - 9
         v = ((fnum>>8)&3) | (block<<2)
-        oplemu.write(1,r,v);      
+        opl3._writeReg(1,r,v);      
         res+=struct.pack('BBB',0x5f,r,v)
     prev_sets[chan] = (0,0,False)
   else:                         # key on
@@ -1605,20 +929,20 @@ def opl3params(freq,namp,chan, keyon):
       if (pchan is None) or (pchan[1]!=namp):
         r = 0x40 + opToOfs(opidxs[0])  # set volume
         v = aval
-        oplemu.write(0,r,v);              
+        opl3._writeReg(0,r,v);              
         res+=struct.pack('BBB',0x5e,r,v)
         r = 0x40 + opToOfs(opidxs[1])
         v = aval
-        oplemu.write(0,r,v);              
+        opl3._writeReg(0,r,v);              
         res+=struct.pack('BBB',0x5e,r,v)
       if (pchan is None) or (pchan[0]!=freq):
         r = 0xA0 + chan  # set low bits of frequency
         v = fnum&0xff
-        oplemu.write(0,r,v);              
+        opl3._writeReg(0,r,v);              
         res+=struct.pack('BBB',0x5e,r,v)
         r = 0xb0 + chan  # set key-on and high bits of frequency
         v = 0b00100000 | ((fnum>>8)&3) | (block<<2)
-        oplemu.write(0,r,v);              
+        opl3._writeReg(0,r,v);              
         res+=struct.pack('BBB',0x5e,r,v)
     else:
       chan-=9
@@ -1627,20 +951,20 @@ def opl3params(freq,namp,chan, keyon):
       if (pchan is None) or (pchan[1]!=namp):
         r = 0x40 + a # volume
         v = aval
-        oplemu.write(1,r,v);              
+        opl3._writeReg(1,r,v);              
         res+=struct.pack('BBB',0x5f,r,v)
         r = 0x40 + b
         v = aval
-        oplemu.write(1,r,v);              
+        opl3._writeReg(1,r,v);              
         res+=struct.pack('BBB',0x5f,r,v)
       if (pchan is None) or (pchan[0]!=freq):
         r = 0xA0 + chan # low bits of freq
         v = fnum&0xff
-        oplemu.write(1,r,v);              
+        opl3._writeReg(1,r,v);              
         res+=struct.pack('BBB',0x5f,r,v)
         r = 0xb0 + chan - 9    # key-on and high bits of freq
         v = 0b00100000 | ((fnum>>8)&3) | (block<<2)
-        oplemu.write(1,r,v);              
+        opl3._writeReg(1,r,v);              
         res+=struct.pack('BBB',0x5f,r,v)
     prev_sets[schan] = (freq,namp,keyon)
 
@@ -1676,7 +1000,7 @@ def fastAnalyze():
   global screen
   global screen_width
   global screen_height  
-  global oplemu
+  global opl3
   minv = origspect.minval
   maxv = origspect.maxval
 
@@ -1743,7 +1067,7 @@ def fastAnalyze():
         namp = 1
       outvgm += opl3params(freq,namp,chan,keyon)
       chan += 1
-    oplemu.render_ms(1000/SLICE_FREQ)
+    opl3._render_ms(1000/SLICE_FREQ)
     outvgm+=struct.pack("<BH",0x61,int(44100/SLICE_FREQ))
 
   outvgm+=b'\x66'
@@ -1761,9 +1085,9 @@ def fastAnalyze():
   sys.stdout.flush()
   s=[]
   gs=[]
-  for i in range(0,len(oplemu._output),4):
-    l=struct.unpack('<h',oplemu._output[i:i+2])[0]
-    r=struct.unpack('<h',oplemu._output[i+2:i+4])[0]
+  for i in range(0,len(opl3._output),4):
+    l=struct.unpack('<h',opl3._output[i:i+2])[0]
+    r=struct.unpack('<h',opl3._output[i+2:i+4])[0]
     s.append(np.array([l,r],dtype='int16'))
     gs.append( (l+r)//2)
 

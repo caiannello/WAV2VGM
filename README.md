@@ -123,6 +123,15 @@ following (lowercase) keys:
 
 ```
 
+```
+CHANGELOG:
+
+2024-11-16: Massive code cleanups and speedups. 
+2024-11-15: Some AI Improvement
+2024-11-14: Greatly improved output sound quality.
+
+```
+
 ## Notes
 
   - The spectrogram is made by slicing the input wave into 4096 byte samples, 
