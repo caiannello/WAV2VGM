@@ -47,7 +47,9 @@ OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to a voice (fnum, block)
 SPECT_VERT_SCALE = 3  # set max vert spect axis to 7350 Hz max rather than the orig 22050 Hz  
 GENE_MAX_GENERATIONS = 500
 # -----------------------------------------------------------------------------
-
+NO_QUIT   = 0  # neither
+SOFT_QUIT = 1  # esc-pressed
+HARD_QUIT = 2  # window close
 
 # opl emulator, register data, and helper functions for converting
 # between binary and float32[] config vector for AI training and inference
@@ -371,7 +373,11 @@ def analyzePeakRuns():
     # Check if user wants to close program
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  
-        return True# raise SystemExit    
+        return HARD_QUIT  
+      elif event.type == pygame.KEYDOWN:
+        if event.key == pygame.K_ESCAPE:
+          return SOFT_QUIT        
+
     # start time of this spectrum within the sound
     t = roi*origspect.dur_secs/slen        
 
@@ -680,7 +686,13 @@ def improveMatch(roi, ospect, g):
   for iter in range(0,GENE_MAX_GENERATIONS):    
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  
-        return opl3.vToRf(g.p[0].genome)
+        return opl3.vToRf(g.p[0].genome), HARD_QUIT
+      elif event.type == pygame.KEYDOWN:
+        if event.key == pygame.K_ESCAPE:
+          return opl3.vToRf(g.p[0].genome), SOFT_QUIT
+        elif event.key == pygame.K_RETURN:
+          return opl3.vToRf(g.p[0].genome), NO_QUIT
+
     improved = False 
     tspect = g.p[0].spect
     if tspect is not None:
@@ -724,7 +736,7 @@ def improveMatch(roi, ospect, g):
 
   vec = g.p[0].genome
   regfile = opl3.vToRf(vec)
-  return regfile
+  return regfile, NO_QUIT
 # -----------------------------------------------------------------------------
 # WIP EXPERIMENT- 
 # Tries to brute-force a solution using either a (slow) genetic algorithm or a 
@@ -768,23 +780,50 @@ this message and the READMEs.  Stay Tuned!
 #########################################################
 ''')
 
-    return
+    return False
+  print('\n##############################################################################\n')
+  print(f'Starting Brute Force: {wavname}')
+
   # init intermediate output file of opl3 reg settings for
   # later conversion to a VGM. (TODO!)
-  with open(tmpfolder+'reg_files.bin','wb') as f:
-    pass
+  # See if we have a work-in-progress file.
+  tmpfile = tmpfolder+'reg_files.bin'
+  try:
+    tsize = os.path.getsize(tmpfile)
+  except:
+    tsize = 0
+  if (tsize==0) or (tsize%512):
+    with open(tmpfile,'wb') as f:      
+      start_roi = 0
+      print('Starting from the beginning.\n')
+  else:
+    with open(tmpfile,'ab') as f:
+      start_roi = (tsize//512)*2
+      print('Found working file. Resuming.\n')
 
   # brute-force loop: -----
   # for every-other spectrum in original spectrogram:
-  for roi in range(0,slen,2): 
+  for roi in range(start_roi,slen,2): 
 
     # check if user is a quitter
     for event in pygame.event.get():
       if event.type == pygame.QUIT:
-        return
+        return HARD_QUIT
+      elif event.type == pygame.KEYDOWN:
+        if event.key == pygame.K_ESCAPE:
+          return SOFT_QUIT
+    # show progess
+    pct = roi*100.0/slen
+    s = f'Brute Force: frame {roi//2}/{slen//2} - Progress: {pct:0.2}% '
+    s += '-'*(80-len(s))
+    print(s)
 
     # this is the spectrum we want recreate.
-    ospect = origspect.spectrogram[roi]
+    ospect = origspect.spectrogram[roi]    
+    pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
+    plotTestSpect(ospect,-115,0,(255,255,255))   # plot original spect
+
+
 
     # NEURAL NETWORK FUN ------------------
     if ai:    
@@ -812,7 +851,7 @@ this message and the READMEs.  Stay Tuned!
     if genetic:
       # Init an empty population for the genetic algorithm,
       # noting the spectrum we hope to achieve.
-      print('GENETIC ANNEALING - Making initial population (1000), please wait...')
+      print('# GENETIC ANNEALING - Making initial population (1000), please wait...')
       g = gene.gene(1000, ospect, fitfunc)
       v = opl3.rfToV(opl3.initRegFile())
       idxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(v,inc_keyons=True)
@@ -825,17 +864,21 @@ this message and the READMEs.  Stay Tuned!
             genome[x] = random.random()
         fit, spect = fitfunc(ospect, genome)    
         g.add(i, fit, spect, genome)
-      print('ok')
+      print('Starting permutations.')
+
       # Do a (slow) genetic annealing process to
       # try to improve the result. 
-      regfile = improveMatch(roi, ospect, g)
+      regfile,do_quit = improveMatch(roi, ospect, g)
+
+      if do_quit:
+        print('Brute force - quitting!')
+        if do_quit == SOFT_QUIT:
+          drawSpect(origspect,0,0,screen_width,screen_height)
+        return do_quit
     # -------------------------------------
 
     # give register cfg to opl3 emulator and render a spectrum
     wave, tspect = opl3.renderOPLFrame(regfile)
-
-    pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
-    plotTestSpect(ospect,-115,0,(255,255,255))   # plot original spect
 
     if tspect is not None: 
       plotTestSpect(tspect,-115,0,(255,255,0))   # plot spect from predicted config
@@ -844,8 +887,10 @@ this message and the READMEs.  Stay Tuned!
 
     # Output our best register file result to intermediate file, 
     # for later conversion to VGM. (TODO!!)
-    with open(tmpfolder+'reg_files.bin','ab') as f:
+    with open(tmpfile,'ab') as f:
       f.write(regfile)
+
+  return NO_QUIT
 # -----------------------------------------------------------------------------
 # Make sequence to init the OPL3 chip.
 #
@@ -1219,14 +1264,16 @@ def loop():
         return True
       elif event.key == pygame.K_a:
         doquit = analyzePeakRuns()
-        if doquit:
+        if doquit == HARD_QUIT:
           return True
       elif event.key == pygame.K_f:
         fastAnalyze()
       elif event.key == pygame.K_p:
         playWave()
       elif event.key == pygame.K_b:
-        bruteForce(genetic=False, ai=True)
+        do_quit = bruteForce(genetic=False, ai=True)
+        if do_quit == HARD_QUIT:
+          return True
       elif event.key == pygame.K_g:
         bruteForce(genetic=True, ai=False)
       elif event.key == pygame.K_d:

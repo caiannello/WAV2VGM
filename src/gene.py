@@ -1,5 +1,7 @@
 import random
 import datetime
+from copy import deepcopy
+import math
 
 random.seed(datetime.datetime.now().timestamp())
 
@@ -148,16 +150,61 @@ class gene:
           b = genome[cb:cb+12]
           genome[cb:cb+12] = a
           genome[ca:ca+12] = b
-
-      # And possibly impose some mutatios
+      
+      # And possibly impose some mutations
       mutagen = desperation
       if mutagen>4:
         mutagen = 4
       if random.randint(0,11) <= mutagen:
         mutants+=1
         genome = mutatefcn(genome, desperation)      
+      
+      # Add the child to population.
       fit, spect = self.fitfunc(self.ideal, genome)
-      self.p.append(gmemb(i,fit,spect,genome))  # child
+      self.p.append(gmemb(i,fit,spect,genome))
+
+
+    # if desperate, do per-chromosome piecewise fitness 
+    # and greatly increase likelihood of mutatation
+    # on worst-fit chromosomes.
+    nukes=0
+    jostles = 0
+    if desperation>=5:
+      genome = self.p[0].genome
+      cgene = deepcopy(genome)
+      j = 0
+      k = 0
+      pfits = []
+      fsum = 0
+      for cl in self.chromosome_lens:
+        chromo = genome[j:j+cl]
+        pgenome = [0.00]*j + chromo + [0.00]*(len(genome) - (j+cl))
+        pfit, _ = self.fitfunc(self.ideal, pgenome)
+        fsum+=pfit
+        pfits.append((k,j,cl,pfit))
+        j+=cl
+        k+=1
+      pfits.sort(key=lambda m: m[3])
+      fsum/=k
+      for f in pfits:
+        idx,pos,cl,fit = f
+        if math.isinf(fit): # nuke chromosomes that arent helping at all
+          cgene[pos:pos+cl] = [ random.random() for q in range(cl) ]
+          nukes+=1
+        elif fit>fsum: # if worse than average, jostle vals
+          jostles += 1
+          for j,velem in enumerate(cgene[pos:pos+cl]):
+            f = random.random()+0.5
+            velem *= f
+            if velem<0.0:
+              velem = 0
+            elif velem>1.0:
+              velem = 1.0
+            cgene[pos+j] = velem
+      #print(f"{pfits=}")
+      cfit, cspect = self.fitfunc(self.ideal, cgene)
+      self.p.append(gmemb(0,cfit,cspect,cgene))
+
     self.p.sort(key=lambda m: m.fit)
-    print(f'die-off:{splitpoint:3d}, mutants:{mutants:3d}',end='')
+    print(f'die-off:{splitpoint:3d}, mutants:{mutants:3d}, nukes:{nukes:2d}, jostles:{jostles:2d}',end='')
 
