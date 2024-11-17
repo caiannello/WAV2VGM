@@ -73,10 +73,54 @@ class OPL3:
       'c17',   'o32',   'o35',
     ]
   '''
+  # for speeding up rfToV and vToRf
+  vec_reloc = {
 
-  vec_elem_names = ['0f3', 'KeyOn.c0', 'Freq.c0', 'FbCnt.c0', 'SnTyp.c0', 'FMul.o0', 'KSAtnLv.o0', 'AttnLv.o0', 'WavSel.o0', 'FMul.o3', 'KSAtnLv.o3', 'AttnLv.o3', 'WavSel.o3', 'KeyOn.c3', 'Freq.c3', 'FbCnt.c3', 'SnTyp.c3', 'FMul.o6', 'KSAtnLv.o6', 'AttnLv.o6', 'WavSel.o6', 'FMul.o9', 'KSAtnLv.o9', 'AttnLv.o9', 'WavSel.o9', '1f4', 'KeyOn.c1', 'Freq.c1', 'FbCnt.c1', 'SnTyp.c1', 'FMul.o1', 'KSAtnLv.o1', 'AttnLv.o1', 'WavSel.o1', 'FMul.o4', 'KSAtnLv.o4', 'AttnLv.o4', 'WavSel.o4', 'KeyOn.c4', 'Freq.c4', 'FbCnt.c4', 'SnTyp.c4', 'FMul.o7', 'KSAtnLv.o7', 'AttnLv.o7', 'WavSel.o7', 'FMul.o10', 'KSAtnLv.o10', 'AttnLv.o10', 'WavSel.o10', '2f5', 'KeyOn.c2', 'Freq.c2', 'FbCnt.c2', 'SnTyp.c2', 'FMul.o2', 'KSAtnLv.o2', 'AttnLv.o2', 'WavSel.o2', 'FMul.o5', 'KSAtnLv.o5', 'AttnLv.o5', 'WavSel.o5', 'KeyOn.c5', 'Freq.c5', 'FbCnt.c5', 'SnTyp.c5', 'FMul.o8', 'KSAtnLv.o8', 'AttnLv.o8', 'WavSel.o8', 'FMul.o11', 'KSAtnLv.o11', 'AttnLv.o11', 'WavSel.o11', 'KeyOn.c6', 'Freq.c6', 'FbCnt.c6', 'SnTyp.c6', 'FMul.o12', 'KSAtnLv.o12', 'AttnLv.o12', 'WavSel.o12', 'FMul.o15', 'KSAtnLv.o15', 'AttnLv.o15', 'WavSel.o15', 'KeyOn.c7', 'Freq.c7', 'FbCnt.c7', 'SnTyp.c7', 'FMul.o13', 'KSAtnLv.o13', 'AttnLv.o13', 'WavSel.o13', 'FMul.o16', 'KSAtnLv.o16', 'AttnLv.o16', 'WavSel.o16', 'KeyOn.c8', 'Freq.c8', 'FbCnt.c8', 'SnTyp.c8', 'FMul.o14', 'KSAtnLv.o14', 'AttnLv.o14', 'WavSel.o14', 'FMul.o17', 'KSAtnLv.o17', 'AttnLv.o17', 'WavSel.o17', '9f12', 'KeyOn.c9', 'Freq.c9', 'FbCnt.c9', 'SnTyp.c9', 'FMul.o18', 'KSAtnLv.o18', 'AttnLv.o18', 'WavSel.o18', 'FMul.o21', 'KSAtnLv.o21', 'AttnLv.o21', 'WavSel.o21', 'KeyOn.c12', 'Freq.c12', 'FbCnt.c12', 'SnTyp.c12', 'FMul.o24', 'KSAtnLv.o24', 'AttnLv.o24', 'WavSel.o24', 'FMul.o27', 'KSAtnLv.o27', 'AttnLv.o27', 'WavSel.o27', '10f13', 'KeyOn.c10', 'Freq.c10', 'FbCnt.c10', 'SnTyp.c10', 'FMul.o19', 'KSAtnLv.o19', 'AttnLv.o19', 'WavSel.o19', 'FMul.o22', 'KSAtnLv.o22', 'AttnLv.o22', 'WavSel.o22', 'KeyOn.c13', 'Freq.c13', 'FbCnt.c13', 'SnTyp.c13', 'FMul.o25', 'KSAtnLv.o25', 'AttnLv.o25', 'WavSel.o25', 'FMul.o28', 'KSAtnLv.o28', 'AttnLv.o28', 'WavSel.o28', '11f14', 'KeyOn.c11', 'Freq.c11', 'FbCnt.c11', 'SnTyp.c11', 'FMul.o20', 'KSAtnLv.o20', 'AttnLv.o20', 'WavSel.o20', 'FMul.o23', 'KSAtnLv.o23', 'AttnLv.o23', 'WavSel.o23', 'KeyOn.c14', 'Freq.c14', 'FbCnt.c14', 'SnTyp.c14', 'FMul.o26', 'KSAtnLv.o26', 'AttnLv.o26', 'WavSel.o26', 'FMul.o29', 'KSAtnLv.o29', 'AttnLv.o29', 'WavSel.o29', 'KeyOn.c15', 'Freq.c15', 'FbCnt.c15', 'SnTyp.c15', 'FMul.o30', 'KSAtnLv.o30', 'AttnLv.o30', 'WavSel.o30', 'FMul.o33', 'KSAtnLv.o33', 'AttnLv.o33', 'WavSel.o33', 'KeyOn.c16', 'Freq.c16', 'FbCnt.c16', 'SnTyp.c16', 'FMul.o31', 'KSAtnLv.o31', 'AttnLv.o31', 'WavSel.o31', 'FMul.o34', 'KSAtnLv.o34', 'AttnLv.o34', 'WavSel.o34', 'KeyOn.c17', 'Freq.c17', 'FbCnt.c17', 'SnTyp.c17', 'FMul.o32', 'KSAtnLv.o32', 'AttnLv.o32', 'WavSel.o32', 'FMul.o35', 'KSAtnLv.o35', 'AttnLv.o35', 'WavSel.o35']
-  vec_elem_bits = [1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3]
+  }
+  got_reloc = False
 
+  vec_elem_names = [
+    '0f3', 'KeyOn.c0', 'Freq.c0', 'FbCnt.c0', 'SnTyp.c0', 'FMul.o0', 'KSAtnLv.o0', 'AttnLv.o0', 
+    'WavSel.o0', 'FMul.o3', 'KSAtnLv.o3', 'AttnLv.o3', 'WavSel.o3', 'KeyOn.c3', 'Freq.c3', 
+    'FbCnt.c3', 'SnTyp.c3', 'FMul.o6', 'KSAtnLv.o6', 'AttnLv.o6', 'WavSel.o6', 'FMul.o9', 
+    'KSAtnLv.o9', 'AttnLv.o9', 'WavSel.o9', '1f4', 'KeyOn.c1', 'Freq.c1', 'FbCnt.c1', 'SnTyp.c1', 
+    'FMul.o1', 'KSAtnLv.o1', 'AttnLv.o1', 'WavSel.o1', 'FMul.o4', 'KSAtnLv.o4', 'AttnLv.o4', 
+    'WavSel.o4', 'KeyOn.c4', 'Freq.c4', 'FbCnt.c4', 'SnTyp.c4', 'FMul.o7', 'KSAtnLv.o7', 
+    'AttnLv.o7', 'WavSel.o7', 'FMul.o10', 'KSAtnLv.o10', 'AttnLv.o10', 'WavSel.o10', '2f5', 
+    'KeyOn.c2', 'Freq.c2', 'FbCnt.c2', 'SnTyp.c2', 'FMul.o2', 'KSAtnLv.o2', 'AttnLv.o2', 
+    'WavSel.o2', 'FMul.o5', 'KSAtnLv.o5', 'AttnLv.o5', 'WavSel.o5', 'KeyOn.c5', 'Freq.c5', 
+    'FbCnt.c5', 'SnTyp.c5', 'FMul.o8', 'KSAtnLv.o8', 'AttnLv.o8', 'WavSel.o8', 'FMul.o11', 
+    'KSAtnLv.o11', 'AttnLv.o11', 'WavSel.o11', 'KeyOn.c6', 'Freq.c6', 'FbCnt.c6', 'SnTyp.c6', 
+    'FMul.o12', 'KSAtnLv.o12', 'AttnLv.o12', 'WavSel.o12', 'FMul.o15', 'KSAtnLv.o15', 'AttnLv.o15', 
+    'WavSel.o15', 'KeyOn.c7', 'Freq.c7', 'FbCnt.c7', 'SnTyp.c7', 'FMul.o13', 'KSAtnLv.o13', 
+    'AttnLv.o13', 'WavSel.o13', 'FMul.o16', 'KSAtnLv.o16', 'AttnLv.o16', 'WavSel.o16', 'KeyOn.c8', 
+    'Freq.c8', 'FbCnt.c8', 'SnTyp.c8', 'FMul.o14', 'KSAtnLv.o14', 'AttnLv.o14', 'WavSel.o14', 
+    'FMul.o17', 'KSAtnLv.o17', 'AttnLv.o17', 'WavSel.o17', '9f12', 'KeyOn.c9', 'Freq.c9', 'FbCnt.c9', 
+    'SnTyp.c9', 'FMul.o18', 'KSAtnLv.o18', 'AttnLv.o18', 'WavSel.o18', 'FMul.o21', 'KSAtnLv.o21', 
+    'AttnLv.o21', 'WavSel.o21', 'KeyOn.c12', 'Freq.c12', 'FbCnt.c12', 'SnTyp.c12', 'FMul.o24', 
+    'KSAtnLv.o24', 'AttnLv.o24', 'WavSel.o24', 'FMul.o27', 'KSAtnLv.o27', 'AttnLv.o27', 'WavSel.o27', 
+    '10f13', 'KeyOn.c10', 'Freq.c10', 'FbCnt.c10', 'SnTyp.c10', 'FMul.o19', 'KSAtnLv.o19', 
+    'AttnLv.o19', 'WavSel.o19', 'FMul.o22', 'KSAtnLv.o22', 'AttnLv.o22', 'WavSel.o22', 'KeyOn.c13', 
+    'Freq.c13', 'FbCnt.c13', 'SnTyp.c13', 'FMul.o25', 'KSAtnLv.o25', 'AttnLv.o25', 'WavSel.o25', 
+    'FMul.o28', 'KSAtnLv.o28', 'AttnLv.o28', 'WavSel.o28', '11f14', 'KeyOn.c11', 'Freq.c11', 
+    'FbCnt.c11', 'SnTyp.c11', 'FMul.o20', 'KSAtnLv.o20', 'AttnLv.o20', 'WavSel.o20', 'FMul.o23', 
+    'KSAtnLv.o23', 'AttnLv.o23', 'WavSel.o23', 'KeyOn.c14', 'Freq.c14', 'FbCnt.c14', 'SnTyp.c14', 
+    'FMul.o26', 'KSAtnLv.o26', 'AttnLv.o26', 'WavSel.o26', 'FMul.o29', 'KSAtnLv.o29', 'AttnLv.o29', 
+    'WavSel.o29', 'KeyOn.c15', 'Freq.c15', 'FbCnt.c15', 'SnTyp.c15', 'FMul.o30', 'KSAtnLv.o30', 
+    'AttnLv.o30', 'WavSel.o30', 'FMul.o33', 'KSAtnLv.o33', 'AttnLv.o33', 'WavSel.o33', 'KeyOn.c16', 
+    'Freq.c16', 'FbCnt.c16', 'SnTyp.c16', 'FMul.o31', 'KSAtnLv.o31', 'AttnLv.o31', 'WavSel.o31', 
+    'FMul.o34', 'KSAtnLv.o34', 'AttnLv.o34', 'WavSel.o34', 'KeyOn.c17', 'Freq.c17', 'FbCnt.c17', 
+    'SnTyp.c17', 'FMul.o32', 'KSAtnLv.o32', 'AttnLv.o32', 'WavSel.o32', 'FMul.o35', 'KSAtnLv.o35', 
+    'AttnLv.o35', 'WavSel.o35']
+  vec_elem_bits = [
+    1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 
+    4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 
+    2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 
+    1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 4, 2, 6, 3, 
+    4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 
+    13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 
+    6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 
+    13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3]
   # which two operators are assigned to each channel
   # in 2-op mode.
 
@@ -242,18 +286,31 @@ class OPL3:
       f=1.0
     return f
 
-  def addNamedVecElem(self, v, name, val):
-    x = self.vec_elem_names.index(name)
+  def addNamedVecElem(self, v, i, name, val):
+    if self.got_reloc:
+      x = self.vec_reloc[i]
+    else:
+      x = self.vec_elem_names.index(name)
+      self.vec_reloc[i] = x
     v[x] = val
     return v
 
-  def getNamedVecElemFloat(self, v, name):
-    x = self.vec_elem_names.index(name)
+  def getNamedVecElemFloat(self, v, i, name):
+    if self.got_reloc:
+      x = self.vec_reloc[i]
+    else:
+      x = self.vec_elem_names.index(name)
+      self.vec_reloc[i] = x
     f = v[x]
     return f
 
-  def getNamedVecElemInt(self, v, name):
-    x = self.vec_elem_names.index(name)
+  def getNamedVecElemInt(self, v, i, name):
+    if self.got_reloc:
+      x = self.vec_reloc[i]
+    else:
+      x = self.vec_elem_names.index(name)
+      self.vec_reloc[i] = x
+
     f = v[x]
     bw = self.vec_elem_bits[x]
     return self.vecFltToInt(f,bw)
@@ -296,8 +353,9 @@ class OPL3:
       else:
         val = 0.0
       name = names[j]
-      v = self.addNamedVecElem(v,name,val)
+      v = self.addNamedVecElem(v,j,name,val)
       mask>>=1
+      j+=1
     #
     # Channel-related things come next:
     #
@@ -327,10 +385,10 @@ class OPL3:
       fbcnt = (c>>1)&7
       fnum = flow|(fhi<<8)
       freq = self.fNumBlkToFreq(fnum, block)
-      v = self.addNamedVecElem(v,'KeyOn.c'+str(i) , float(keyon))
-      v = self.addNamedVecElem(v,'Freq.c'+str(i)  , freq / self.OPL3_MAX_FREQ)
-      v = self.addNamedVecElem(v,'FbCnt.c'+str(i) , self.vecIntToFlt(fbcnt,3))
-      v = self.addNamedVecElem(v,'SnTyp.c'+str(i) , float(sntype))
+      v = self.addNamedVecElem(v,i*4+6,'KeyOn.c'+str(i) , float(keyon))
+      v = self.addNamedVecElem(v,i*4+7,'Freq.c'+str(i)  , freq / self.OPL3_MAX_FREQ)
+      v = self.addNamedVecElem(v,i*4+8,'FbCnt.c'+str(i) , self.vecIntToFlt(fbcnt,3))
+      v = self.addNamedVecElem(v,i*4+9,'SnTyp.c'+str(i) , float(sntype))
     #
     # Operator related things come last:
     #
@@ -350,10 +408,14 @@ class OPL3:
       ws = rf[0xE0|o]&7
       attnlv = f&63
       ksatnlv = (f>>6)&3
-      v = self.addNamedVecElem(v,'FMul.o'+str(i),self.vecIntToFlt(fmul,4))
-      v = self.addNamedVecElem(v,'KSAtnLv.o'+str(i),self.vecIntToFlt(ksatnlv,2))
-      v = self.addNamedVecElem(v,'AttnLv.o'+str(i),self.vecIntToFlt(attnlv,6))
-      v = self.addNamedVecElem(v,'WavSel.o'+str(i),self.vecIntToFlt(ws,3))
+      v = self.addNamedVecElem(v,i*4+(4*18)+10,'FMul.o'+str(i),self.vecIntToFlt(fmul,4))
+      v = self.addNamedVecElem(v,i*4+(4*18)+11,'KSAtnLv.o'+str(i),self.vecIntToFlt(ksatnlv,2))
+      v = self.addNamedVecElem(v,i*4+(4*18)+12,'AttnLv.o'+str(i),self.vecIntToFlt(attnlv,6))
+      v = self.addNamedVecElem(v,i*4+(4*18)+13,'WavSel.o'+str(i),self.vecIntToFlt(ws,3))
+
+    self.got_reloc = True
+    #print(self.vec_reloc)
+    #exit()
 
     return v
 
@@ -382,7 +444,12 @@ class OPL3:
   # opposite of the above operation, also sets some 
   # defaults that don't concern the AI.
   def RF(self, rf, idx, v):
-    return rf[0:idx] + struct.pack('B',v) + rf[idx+1:]
+    try:
+      rf = rf[0:idx] + struct.pack('B',v) + rf[idx+1:]
+    except Exception as e:
+      print(e, v)
+      raise Exception(e)
+    return rf
 
   # Returns initial synth settings as a 512-byte OPL3
   # register value file.
@@ -413,17 +480,17 @@ class OPL3:
     for j in range(0,6):
       i<<=1
       name = names[j]
-      if self.getNamedVecElemFloat(v,name)>=0.5:
+      if self.getNamedVecElemFloat(v,j,name)>=0.5:
         i|=1
     rf = self.RF(rf, 0x104, i)
 
     # channel-related things
     for i in range(0,18):
       o = self.chan_reg_ofs[i]
-      keyon = self.getNamedVecElemInt(v,'KeyOn.c'+str(i))
-      freq = self.getNamedVecElemInt(v,'Freq.c'+str(i))
-      fbcnt = self.getNamedVecElemInt(v,'FbCnt.c'+str(i))
-      sntyp = self.getNamedVecElemInt(v,'SnTyp.c'+str(i))
+      keyon = self.getNamedVecElemInt(v,i*4+6,'KeyOn.c'+str(i))
+      freq = self.getNamedVecElemFloat(v,i*4+7,'Freq.c'+str(i))
+      fbcnt = self.getNamedVecElemInt(v,i*4+8,'FbCnt.c'+str(i))
+      sntyp = self.getNamedVecElemInt(v,i*4+9,'SnTyp.c'+str(i))
 
       fnum, blk = self.freqToFNumBlk( freq * self.OPL3_MAX_FREQ )
       flow = fnum&0xff
@@ -436,10 +503,10 @@ class OPL3:
     # operator-related_things:
     for i in range(0,36):
       o=self.op_reg_ofs[i]
-      fmul = self.getNamedVecElemInt(v,'FMul.o'+str(i))
-      ksatnlv = self.getNamedVecElemInt(v,'KSAtnLv.o'+str(i))
-      attnlv = self.getNamedVecElemInt(v,'AttnLv.o'+str(i))
-      wavsel = self.getNamedVecElemInt(v,'WavSel.o'+str(i))
+      fmul = self.getNamedVecElemInt(v,i*4+(4*18)+10,'FMul.o'+str(i))
+      ksatnlv = self.getNamedVecElemInt(v,i*4+(4*18)+11,'KSAtnLv.o'+str(i))
+      attnlv = self.getNamedVecElemInt(v,i*4+(4*18)+12,'AttnLv.o'+str(i))
+      wavsel = self.getNamedVecElemInt(v,i*4+(4*18)+13,'WavSel.o'+str(i))
       j+=4
       rf = self.RF(rf,0x20|o,0b00100000 | fmul)    
       rf = self.RF(rf,0x40|o,attnlv | (ksatnlv<<6))    
@@ -509,7 +576,11 @@ class OPL3:
         v = cfg[key]
         self._writeReg(b,r,v)
     elif isinstance(cfg,list):
-      rf = self.vToRf(cfg)
+      try:
+        rf = self.vToRf(cfg)
+      except Exception as e:
+        print(e,cfg)
+        exit()
       self._writeRegFile(rf)    # assume it is a float32[] cfg vector
     else:
       self._writeRegFile(cfg)   # assume it is a bytes[512]

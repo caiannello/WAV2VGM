@@ -561,10 +561,16 @@ def mutatefcn(genome, desperation):
   ncdist = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,3,3,3,3,4,4,5,6,7]
   numchanges = random.choice(ncdist) + desperation
 
+  coup = 0
+  if desperation>10:
+    coup = 0.1*(desperation-10)
+    if coup > 0.8:
+      coup = 0.8
+
   for c in range(0,numchanges):
     x = random.randint(0,len(genome)-1)
-    if random.random()<=0.1:              # 10% chance to fully re-randomize the element,
-      if x in lvls:
+    if random.random()<=(0.1+coup):              # normally a 10% chance to fully re-randomize the element,
+      if x in lvls:                              # but the chanc3e can go as high as 90% when desperation is high
         genome[x] = opl3.randomAtten()
       else:
         genome[x] = random.random()
@@ -605,6 +611,12 @@ def fitfunc(ospect, v):
     a = ospect[i]-tspect[i]
     dif += a*a
   return math.sqrt(dif), tspect
+# -----------------------------------------------------------------------------
+# Given an OPL3 cfg vector and an ideal spectrum, goes through every element 
+# of the vector, tweaking each element up/down by one count, retaining any
+# changes that happened to improve the fit. 
+# Expensive, so only done by the genetic algorithm for generations where no 
+# improved offspring were seen.
 # -----------------------------------------------------------------------------
 def gradientDescent(ospect, lastfit, lastspect, v):
   newv = deepcopy(v)
@@ -704,11 +716,14 @@ def improveMatch(roi, ospect, g):
       pid, fit, spect, newv, tweaks = gradientDescent(ospect, lastfit, lastspect, g.p[0].genome)
       if tweaks == 0:
         desperation+=1
+        if desperation >= 50:
+          print(' -- Moving on.\n')
+          break
       g.add(pid, fit, spect, newv)
     print()
 
   vec = g.p[0].genome
-  regfile = opl3.vToRF(vec)
+  regfile = opl3.vToRf(vec)
   return regfile
 # -----------------------------------------------------------------------------
 # WIP EXPERIMENT- 
@@ -797,7 +812,7 @@ this message and the READMEs.  Stay Tuned!
     if genetic:
       # Init an empty population for the genetic algorithm,
       # noting the spectrum we hope to achieve.
-      print('Making initial population, please standby...')
+      print('GENETIC ANNEALING - Making initial population (1000), please wait...')
       g = gene.gene(1000, ospect, fitfunc)
       v = opl3.rfToV(opl3.initRegFile())
       idxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(v,inc_keyons=True)

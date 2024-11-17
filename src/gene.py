@@ -129,5 +129,5 @@ class gene:
       fit, spect = self.fitfunc(self.ideal, genome)
       self.p.append(gmemb(i,fit,spect,genome))  # child
     self.p.sort(key=lambda m: m.fit)
-    print(f'split:{splitpoint:3d}, mutants:{mutants:3d}',end='')
+    print(f'die-off:{splitpoint:3d}, mutants:{mutants:3d}',end='')
 
