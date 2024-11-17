@@ -35,10 +35,22 @@ class gene:
 
   chromosome_lens = [25,25,25,12,12,12,25,25,25,12,12,12]  
 
+  long_chromos = []
+  short_chromos = []
   def __init__(self, p_max=500, ideal=None, fitfunc=None):
     self.p_max = p_max  
     self.ideal = ideal
     self.fitfunc = fitfunc
+    ofs = 0
+    for i,l in enumerate(self.chromosome_lens):
+      if l==25:
+        self.long_chromos.append(ofs)
+      else:
+        self.short_chromos.append(ofs)
+      ofs+=l
+    #print(self.short_chromos, self.long_chromos)
+    #exit()
+
 
   def add(self, id, fit, spect=None, genome=None):  # fitness: lower is better
     if self.p_ct < self.p_max:
@@ -120,12 +132,30 @@ class gene:
             else:
               genome += ga[j:j+cl]
           j+=cl
+      # Lets also swap around any chromosomes that are interchangable to
+      # try to snap out of some local minima
+      swaps = random.randint(0,4)
+      for s in range(swaps):
+        if random.random()>=0.5:
+          ca,cb = random.sample(self.long_chromos,2)
+          a = genome[ca:ca+25]
+          b = genome[cb:cb+25]
+          genome[cb:cb+25] = a
+          genome[ca:ca+25] = b
+        else:
+          ca,cb = random.sample(self.short_chromos,2)
+          a = genome[ca:ca+12]
+          b = genome[cb:cb+12]
+          genome[cb:cb+12] = a
+          genome[ca:ca+12] = b
+
+      # And possibly impose some mutatios
       mutagen = desperation
       if mutagen>4:
         mutagen = 4
       if random.randint(0,11) <= mutagen:
         mutants+=1
-        genome = mutatefcn(genome, desperation)
+        genome = mutatefcn(genome, desperation)      
       fit, spect = self.fitfunc(self.ideal, genome)
       self.p.append(gmemb(i,fit,spect,genome))  # child
     self.p.sort(key=lambda m: m.fit)

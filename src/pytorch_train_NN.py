@@ -31,8 +31,8 @@ dir_path            = os.path.dirname(os.path.realpath(__file__))
 
 # Parameters
 
-spect_filepath      = dir_path+'/../training_sets/bopl3_training_spects.bin'  # training test data
-synthcfg_filepath   = dir_path+'/../training_sets/bopl3_training_regs.bin'    # training truth truth
+spect_filepath      = dir_path+'/../training_sets/opl3_training_spects.bin'  # training test data
+synthcfg_filepath   = dir_path+'/../training_sets/opl3_training_regs.bin'    # training truth truth
 model_filepath      = dir_path+'/../models/torch_model.pth'                  # trained model output
 batch_size = 32
 epochs = 4        # 50   keep this low until we settle on the dataset and model
