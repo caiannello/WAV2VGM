@@ -33,6 +33,7 @@ from src.OPL3 import OPL3
 from src import gene                # Import 
 from src.model_definitions import OPL3Model  # AI model defs
 
+from copy import deepcopy
 # randomize the PRNG
 random.seed(datetime.datetime.now().timestamp())
 # -----------------------------------------------------------------------------
@@ -553,26 +554,102 @@ def initRegs():
 # genetic algo calls this to impose a mutation on a genome (float32[] cfg vect)
 # -----------------------------------------------------------------------------
 lvls = []
-def mutatefcn(genome):
-  global opl3, lvls
+freqs = []
+def mutatefcn(genome, desperation):
+  global opl3, lvls,freqs
+
   ncdist = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,3,3,3,3,4,4,5,6,7]
-  numchanges = random.choice(ncdist)
+  numchanges = random.choice(ncdist) + desperation
+
   for c in range(0,numchanges):
     x = random.randint(0,len(genome)-1)
-    if x in lvls:
-      genome[x] = opl3.randomAtten()
-    else:
-      genome[x] = random.random()
+    if random.random()<=0.1:              # 10% chance to fully re-randomize the element,
+      if x in lvls:
+        genome[x] = opl3.randomAtten()
+      else:
+        genome[x] = random.random()
+    else:                                 # 90% chance for an incremental bump.
+      if x in freqs:
+        f = genome[x]
+        f += random.random() * 0.0005
+        if f < 0.0:
+          f = 0.0
+        elif f > 1.0:
+          f = 1.0
+        genome[x] = f
+      else:
+        wb = opl3.vec_elem_bits[x]
+        mag = (1<<wb)-1
+        i = opl3.vecFltToInt(genome[x],wb)
+        i += random.randint(1,2)-1
+        if i<0:
+          i=0
+        elif i>mag:
+          i=mag
+        genome[x] = opl3.vecIntToFlt(i,wb)
+
   return genome
+# -----------------------------------------------------------------------------
+# fitness function for genetic algorithm.
+#
+# Renders the opl waveform for the given genome (opl register set), then 
+# returns the difference between its frequency spectrum and ospect, the ideal.
+# -----------------------------------------------------------------------------
+def fitfunc(ospect, v):
+  global opl3
+  wave, tspect = opl3.renderOPLFrame(v)
+  if tspect is None:
+    return 999999999999, None
+  dif = 0
+  for i in range(2048):
+    a = ospect[i]-tspect[i]
+    dif += a*a
+  return math.sqrt(dif), tspect
+# -----------------------------------------------------------------------------
+def gradientDescent(ospect, lastfit, lastspect, v):
+  newv = deepcopy(v)
+  vl = len(newv)
+  pid = 0  
+  tweaks = 0
+  ofit = lastfit
+  for x in range(0,vl):
+    bw = opl3.vec_elem_bits[x]
+    mag = (1<<bw)-1
+    f  = newv[x]
+    i  = opl3.vecFltToInt(f, bw)
+    if i>0:
+      fa = opl3.vecIntToFlt(i-1,bw)
+      newv[x] = fa
+      fita, specta = fitfunc(ospect, newv)
+      if fita<lastfit:
+        lastfit = fita
+        newv[x] = fa
+        lastspect = specta
+        tweaks+=1
+        continue
+    if i<mag:
+      fb = opl3.vecIntToFlt(i+1,bw)
+      newv[x] = fb
+      fitb, spectb = fitfunc(ospect, newv)
+      if fitb<lastfit:
+        lastfit = fitb
+        newv[x] = fb
+        lastspect = spectb
+        tweaks+=1
+        continue
+    newv[x]=f  # no improvement, revert to orig val 
+  print(f', tweaks: {tweaks} ',end='')
+  return pid, lastfit, lastspect, newv, tweaks
 # -----------------------------------------------------------------------------
 # repeatedly calls calls the genetic algorithm's generate() method and shows
 # the current best result.
 #
-# Returns the best OPL3 configuration vector achieved after max iterations.
+# Returns the best OPL3 configuration achieved after max iterations.
 # -----------------------------------------------------------------------------
 def improveMatch(roi, ospect, g):
   global screen,screen_width,screen_height
   global GENE_MAX_GENERATIONS
+  global desperation
   # width and height of test spectrs drawn here
   ww = screen_width
   hh = screen_height//4
@@ -583,12 +660,16 @@ def improveMatch(roi, ospect, g):
   pygame.draw.rect(screen,(0,0,0),(0,yofs,ww,hh*2))  
   initfit = None
   lastfit = 0
+  lastspect = None
+  desperation = 0 # when even gradient descent fails, desperation goes up,
+                  # and we allow more mutations
   lx = ly = px = py = 0
   tstart = time.time()
   for iter in range(0,GENE_MAX_GENERATIONS):    
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  
-        return g.p[0].genome    
+        return opl3.vToRf(g.p[0].genome)
+    improved = False 
     tspect = g.p[0].spect
     if tspect is not None:
       fit = g.p[0].fit
@@ -596,17 +677,19 @@ def improveMatch(roi, ospect, g):
         initfit = fit
       tnow = time.time()
       tdelt = tnow-tstart
-      tstart = tnow
-      print(f'Generation: {iter:3d}, fit:{fit:0.9f}, tdelt:{tdelt:0.2f} ',end='')
+      tstart = tnow  
+      print(f'Generation: {iter:3d}, fit:{fit:20.15f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
       sys.stdout.flush()
       if fit!=lastfit:
+        desperation = 0
+        improved = True
         lastfit=fit
+        lastspect = deepcopy(tspect)
         pygame.draw.rect(screen,(0,0,0),(0,yofs,ww,hh))  
         plotTestSpect(tspect,-115.0,0,gcolor=(255,255,0),yofs=yofs)
         plotTestSpect(ospect,-115.0,0,gcolor=(255,255,255),yofs=yofs)
         plotText("Test Spectrum",8,yofs+8)
-        plotText("Fitness",8,(screen_height-1)-24)
-
+        plotText("Fitness",8,(screen_height-1)-24)    
       px = iter*ww//GENE_MAX_GENERATIONS
       py = (screen_height-1)-(hh*fit//initfit)
       if iter>0:
@@ -614,26 +697,19 @@ def improveMatch(roi, ospect, g):
       lx=px
       ly=py
       pygame.display.update()
-    g.generate(mutatefcn)
+    g.generate(mutatefcn, desperation)
+    # do an (expensive) gradient descent step for this generation
+    # fitness didnt improve at all during the previous one.
+    if (not improved) and (lastspect is not None):
+      pid, fit, spect, newv, tweaks = gradientDescent(ospect, lastfit, lastspect, g.p[0].genome)
+      if tweaks == 0:
+        desperation+=1
+      g.add(pid, fit, spect, newv)
+    print()
 
-  regfile = g.p[0].genome
+  vec = g.p[0].genome
+  regfile = opl3.vToRF(vec)
   return regfile
-# -----------------------------------------------------------------------------
-# fitness function for genetic algorithm.
-#
-# Renders the opl waveform for the given genome (opl register set), then 
-# returns the difference between its frequency spectrum and ospect, the ideal.
-# -----------------------------------------------------------------------------
-def fitfunc(ospect,v):
-  global opl3
-  wave, tspect = opl3.renderOPLFrame(v)
-  if tspect is None:
-    return 999999999999, None
-  dif = 0
-  for i in range(2048):
-    a = ospect[i]-tspect[i]
-    dif += a*a
-  return math.sqrt(dif), tspect
 # -----------------------------------------------------------------------------
 # WIP EXPERIMENT- 
 # Tries to brute-force a solution using either a (slow) genetic algorithm or a 
@@ -645,7 +721,7 @@ def bruteForce(genetic = False, ai = True):
   global screen_width
   global screen_height  
   global opl3
-  global lvls
+  global lvls, freqs
   ww = int(screen_width)
   hh = int(screen_height//4)
   slen = len(origspect.spectrogram)
