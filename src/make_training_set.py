@@ -39,7 +39,7 @@ import sys
 import os
 # -----------------------------------------------------------------------------
 DISPLAY_INTERVAL = 50     # permutations per display refresh
-REINIT_PERIOD = 100000    # permutations per resetting the OPL to defaults
+REINIT_PERIOD = 10000     # permutations per resetting the OPL to defaults
 MAX_DB = 0                # min/max when plotting spectrum bins onscreen
 MIN_DB = -150.0
 WW=1920                   # display window width and height
@@ -150,6 +150,25 @@ def plotWaveform(wave):
     y0=int((s0+32768)*HH/65536)
     y1=int((s1+32768)*HH/65536)
     pygame.draw.line(screen, (255,255,0), (x0,y0),(x1,y1))  
+
+# select 2-op/4-op. channel hard coded to zero for now
+
+def setComplexity(v, do_4op):
+  if do_4op:
+    v[0] = 1.0   # chan 0: 4-op
+  else:
+    v[0] = 0.0  # channel 0: 2-op
+
+  # see what elements are permutable per each channel
+  permidxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(v)
+  permidxs = permidxs[0]   # permutable vector elems for selected chan(s)
+  lvls = lvls[0]           # operator attenuation levels
+  freqs = freqs[0]         # channel frequency setting(s)
+  keyons = keyons[0]       # channel key-on setting(s)
+  for ko in keyons:               # ensure key-on is set for selected channel(s)
+    v[ko] = 1.0
+
+  return v, permidxs, lvls, freqs
 # -----------------------------------------------------------------------------
 # main loop
 # -----------------------------------------------------------------------------
@@ -160,24 +179,11 @@ def main():
   opl_vec = opl3.rfToV(opl3.initRegFile())
   vl = len(opl_vec)
 
-  # see what elements are permutable per each channel
-  permidxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(opl_vec)
-
-  # pick one channel to fuzz, for now.
-  fuzzchan = 0 #random.randint(0,17)
-  print(f'Channnel to fuzz: {fuzzchan}')
-  
-  permidxs = permidxs[fuzzchan]   # permutable vector elems for selected chan(s)
-  lvls = lvls[fuzzchan]           # operator attenuation levels
-  freqs = freqs[fuzzchan]         # channel frequency setting(s)
-  keyons = keyons[fuzzchan]       # channel key-on setting(s)
-  for ko in keyons:               # ensure key-on is set for selected channel(s)
-    opl_vec[ko] = 1.0
-
-  print('all permutables: ',permidxs)
-  print('  op atten. lvs: ',lvls)      
-  print('   chan. keyons: ',keyons)
-  print('    chan. freqs: ',freqs)
+  do_4op = False
+  opl_vec, permidxs, lvls, freqs = setComplexity(opl_vec, do_4op)
+  print('  permutables: ',permidxs)
+  print('op atten. lvs: ',lvls)      
+  print('  chan. freqs: ',freqs)
 
   print(f'\nInitial float32[{len(opl_vec)}] Config. Vector:')
   opl3.showVector(opl_vec)
@@ -221,7 +227,7 @@ def main():
         rfile.close()
         sfile.close()
         return 
-
+    '''
     if random.random()<0.98:
       x = random.choice(freqs)
       o = opl_vec[x]
@@ -234,11 +240,12 @@ def main():
         freq_sweep_direction = 1
       opl_vec[x] = o
     else:  
-      x = random.choice(permidxs)
-      if x in lvls:
-        opl_vec[x]= opl3.randomAtten()
-      else:
-        opl_vec[x]=random.random()
+    '''
+    x = random.choice(permidxs)
+    if x in lvls:
+      opl_vec[x]= opl3.randomAtten()
+    else:
+      opl_vec[x]=random.random()
 
     rf = opl3.vToRf(opl_vec)
 
@@ -288,7 +295,7 @@ def main():
           if fszmb!=lastszmb: # every 1MB out, show a status update.
             lastszmb = fszmb
             sfsz = f','
-            l = f'iteration: {iters:12d} ({fszmb:d} MB), samp min/max:({opl3.wave_low},{opl3.wave_high}), bin min/max:({dbin_low},{dbin_high}), cur_lvls:['
+            l = f'batches: {iters//32:12d} ({fszmb:d} MB), samp min/max:({opl3.wave_low},{opl3.wave_high}), bin min/max:({dbin_low},{dbin_high}), cur_lvls:['
             for x in lvls:
               l += f'{opl_vec[x]:6.4f},'
             print(l[0:-1]+']')
@@ -303,18 +310,19 @@ def main():
       # or reinit the opl3 registers
       perms_this_mode += 1      
       if  perms_this_mode % REINIT_PERIOD == 0:
+        #opl_vec = opl3.rfToV(opl3.initRegFile())
         perms_this_mode = 0
-        REINIT_PERIOD = random.randint(10000,500000)
-        opl_vec = opl3.rfToV(opl3.initRegFile())
-        permidxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(opl_vec)
-        fuzzchan = 0 #random.randint(0,17)
-        print(f'Channnel to fuzz: {fuzzchan}')    
-        permidxs = permidxs[fuzzchan]   # permutable vector elems for selected chan(s)
-        lvls = lvls[fuzzchan]           # operator attenuation levels
-        freqs = freqs[fuzzchan]         # channel frequency setting(s)
-        keyons = keyons[fuzzchan]       # channel key-on setting(s)
-        for ko in keyons:     # ensure keyon is set for selected channel(s)
-          opl_vec[ko] = 1.0
+        do_4op = not do_4op
+        if do_4op:
+          REINIT_PERIOD = random.randint(10000,50000)
+        else:
+          REINIT_PERIOD = random.randint(10000,50000)
+        opl_vec, permidxs, lvls, freqs = setComplexity(opl_vec, do_4op)
+        print('  permutables: ',permidxs)
+        print('op atten. lvs: ',lvls)      
+        print('  chan. freqs: ',freqs)
+
+
 
 ###############################################################################
 # ENTRYPOINT

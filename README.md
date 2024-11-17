@@ -113,10 +113,14 @@ following (lowercase) keys:
 
   EXPERIMENTAL STUFF -   (WORK-IN-PROGRESS)
 
-  b - Tries to make a VGM using the convolutional neural-network model at
+  n - Tries to make a VGM using the convolutional neural-network model at
       'models/torch_model.pth'
 
   g - Tries to make a VGM using the slow-as-heck genetic algorithm! 
+
+  b - Assigns OPL3 channels to spectral peaks, like the original method,
+      but then interates of the settings, allowing 2-op and 4-op, for as
+      long as improvement is seen.
 
   Clicking on the displayed spectrogram sets some cursors, but these don't yet 
   do anything, and might even crash the app! (Still kinda fun to play with.)

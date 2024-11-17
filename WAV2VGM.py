@@ -742,7 +742,7 @@ def improveMatch(roi, ospect, g):
 # Tries to brute-force a solution using either a (slow) genetic algorithm or a 
 # convolutional neural-network.
 # -----------------------------------------------------------------------------
-def bruteForce(genetic = False, ai = True):
+def bruteForce(brute = False, genetic = False, ai = True):
   global origspect
   global screen
   global screen_width
@@ -792,7 +792,8 @@ this message and the READMEs.  Stay Tuned!
     tsize = os.path.getsize(tmpfile)
   except:
     tsize = 0
-  if (tsize==0) or (tsize%512):
+  # if file full, or empty, or len is not multiple of 512, start over.
+  if (tsize==0) or (tsize%512) or (tsize>=(512*(slen//2))):
     with open(tmpfile,'wb') as f:      
       start_roi = 0
       print('Starting from the beginning.\n')
@@ -814,7 +815,7 @@ this message and the READMEs.  Stay Tuned!
           return SOFT_QUIT
     # show progess
     pct = roi*100.0/slen
-    s = f'Brute Force: frame {roi//2}/{slen//2} - Progress: {pct:0.2}% '
+    s = f'Brute Force: frame {roi//2}/{slen//2} - Progress: {pct:6.2f}% '
     s += '-'*(80-len(s))
     print(s)
 
@@ -823,7 +824,24 @@ this message and the READMEs.  Stay Tuned!
     pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
     plotTestSpect(ospect,-115,0,(255,255,255))   # plot original spect
 
+    if (brute):
+      peaks = getRankedPeaks(ospect, -115.0, 0, True, 5, 5)
+      # (peak_height,peak_freq,peak_x,peak_y,peak_prominence)
+      # make a sine wave per peak
+      l = ''
+      vvals = []
+      for chan,p in enumerate(peaks):
+        pheight, pfreq, _, _, _ = p
+        if chan>=12:
+          break
+        if pheight<-48.0:
+          break
+        vfreq = pfreq/OPL3_MAX_FREQ
+        vamp = 1.0 - (pheight+48.0)/48.0
+        vvals.append([float(vfreq),float(vamp)])
+      print(vvals)
 
+      regfile = None
 
     # NEURAL NETWORK FUN ------------------
     if ai:    
@@ -832,9 +850,9 @@ this message and the READMEs.  Stay Tuned!
       inp = []
       for i,b in enumerate(ospect[0:-1]):
         o = abs(int(b))
-        if o>255:
-          o=255
-        o = 255-o
+        if o > 255:
+          o = 255
+        o = 255 - o
         inp.append(float(o)/255.0)  
       # Shape becomes (1, 2048)
       sample_input = torch.tensor(inp, dtype=torch.float32).reshape(1, 2048)
@@ -887,9 +905,11 @@ this message and the READMEs.  Stay Tuned!
 
     # Output our best register file result to intermediate file, 
     # for later conversion to VGM. (TODO!!)
-    with open(tmpfile,'ab') as f:
-      f.write(regfile)
-
+    if regfile is not None:
+      with open(tmpfile,'ab') as f:
+        f.write(regfile)
+  
+  drawSpect(origspect,0,0,screen_width,screen_height)
   return NO_QUIT
 # -----------------------------------------------------------------------------
 # Make sequence to init the OPL3 chip.
@@ -1270,12 +1290,18 @@ def loop():
         fastAnalyze()
       elif event.key == pygame.K_p:
         playWave()
-      elif event.key == pygame.K_b:
-        do_quit = bruteForce(genetic=False, ai=True)
+      elif event.key == pygame.K_n:
+        do_quit = bruteForce(brute=False, genetic=False, ai=True)
         if do_quit == HARD_QUIT:
           return True
       elif event.key == pygame.K_g:
-        bruteForce(genetic=True, ai=False)
+        do_quit = bruteForce(brute=False, genetic=True, ai=False)
+        if do_quit == HARD_QUIT:
+          return True
+      elif event.key == pygame.K_b:
+        do_quit = bruteForce(brute=True, genetic=False, ai=False)
+        if do_quit == HARD_QUIT:
+          return True
       elif event.key == pygame.K_d:
         allthumbs = {}
         for roi in range(44,46):

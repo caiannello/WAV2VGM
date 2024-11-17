@@ -135,8 +135,8 @@ for sample_input, true_output in val_loader_iter:
     sample_input, true_output = sample_input.to(device), true_output.to(device)
     predicted_output = model(sample_input)
     print("Sample Input:", sample_input.cpu().numpy())
-    print("Predicted Output:", predicted_output.cpu().numpy())
     print("True Output:", true_output.cpu().numpy())
+    print("Predicted Output:", predicted_output.detach().numpy())
     break
 
 # plotting the Loss graph

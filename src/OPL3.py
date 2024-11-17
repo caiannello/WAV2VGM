@@ -429,7 +429,7 @@ class OPL3:
     print('------------------------------- [')
     for i,zi in enumerate(z):
       a,b = zi
-      l+=f'{a:>12}: {b:5.2f}, '
+      l+=f'{i:>3d} {a:>12}: {b:5.2f}, '
       j+=1
       if j>5:
         j=0
@@ -525,8 +525,9 @@ class OPL3:
     # and which operators are associated with each.
     for i in range(0,6):
       if v[i] >= 0.5:
-        c0,c1 = self._4op_chan_combos[5-i]
+        c0,c1 = self._4op_chan_combos[i]
         chans = self.combineChans(chans,c0,c1)
+
     idxs = {}
     keyons = {}
     lvls = {}
@@ -567,6 +568,8 @@ class OPL3:
   def renderOPLFrame(self, cfg):
     # init opl emulator
     self._do_init()
+    if cfg is None:
+      return None, None
     if isinstance(cfg, dict):  # if config is an old-style opl reg dict
       rf = self.initRegFile()
       keys = list(cfg.keys())

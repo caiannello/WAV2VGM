@@ -9,60 +9,47 @@ from   torch.utils.data import Dataset
 class OPL3Model(nn.Module):
     def __init__(self):
         super(OPL3Model, self).__init__()        
-        # Convolutional layers
+        # Convolutional layers for local feature extraction
         self.conv_layers = nn.Sequential(
-            nn.Conv1d(in_channels=1, out_channels=32, kernel_size=5, stride=1, padding=2, padding_mode='reflect'),  # First conv layer
+            nn.Conv1d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
-            nn.Conv1d(in_channels=32, out_channels=64, kernel_size=5, stride=1, padding=2, padding_mode='reflect'),  # Second conv layer
+            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=7, stride=1, padding=3),
             nn.ReLU()
         )
 
-        self.attention = nn.MultiheadAttention(embed_dim=64, num_heads=4, batch_first=True)
+        # Pooling for downsampling
+        self.pooling = nn.MaxPool1d(kernel_size=4, stride=4)
 
-        # Fully connected layers
-        self.model = nn.Sequential(
-            nn.Linear(64 * 2048, 2048),  # Adjusted input size for flattened Conv1d output
-            nn.BatchNorm1d(2048),
+        # Attention for global feature extraction
+        self.attention = nn.MultiheadAttention(embed_dim=32, num_heads=4, batch_first=True)
+
+        # Fully connected layers for synthesizer configuration output
+        self.fc_layers = nn.Sequential(
+            nn.Linear(32 * (2048 // 4), 512),  # Adjust input size based on pooling
             nn.ReLU(),
-            nn.Linear(2048, 4096),
-            nn.BatchNorm1d(4096),
+            nn.Linear(512, 256),
             nn.ReLU(),
-            nn.Linear(4096, 4096),
-            nn.BatchNorm1d(4096),
-            nn.ReLU(),
-            nn.Linear(4096, 2048),
-            nn.BatchNorm1d(2048),
-            nn.ReLU(),
-            nn.Linear(2048, 4096),
-            nn.BatchNorm1d(4096),
-            nn.ReLU(),
-            nn.Linear(4096, 2048),
-            nn.BatchNorm1d(2048),
-            nn.ReLU(),
-            nn.Linear(2048, 1024),
-            nn.BatchNorm1d(1024),
-            nn.ReLU(),
-            nn.Linear(1024, 222)
+            nn.Linear(256, 222)  # Final output for synthesizer configuration
         )
+
     def forward(self, x):
-        # Reshape input to add a channel dimension for Conv1d layers
-        x = x.unsqueeze(1)  # Shape becomes [batch_size, 1, 2048]  
-        # Pass through convolutional layers
-        x = self.conv_layers(x) 
-        
-        # Prepare for attention by permuting to (batch_size, sequence_length, features)
-        x = x.permute(0, 2, 1)  # Shape becomes (batch_size, 2048, 32)
+        # Reshape for Conv1D
+        x = x.unsqueeze(1)  # Shape: [batch_size, 1, 2048]
 
-        # Apply multi-head attention (self-attention) where query, key, and value are all `x`
-        attn_output, _ = self.attention(x, x, x)  # Shape: (batch_size, 2048, 32)
-        
-        # Flatten the output from the attention layer for dense layers
-        attn_output = attn_output.reshape(attn_output.size(0), -1)  # Shape: (batch_size, 32 * 2048)
+        # Convolutional layers
+        x = self.conv_layers(x)  # Shape: [batch_size, 32, 2048]
 
-        # Flatten the output from the Conv1d layers
-        #x = x.view(x.size(0), -1)  # Shape becomes [batch_size, 32 * 2048]        
-        # Pass through the fully connected layers
-        x = self.model(attn_output)        
+        # Pooling
+        x = self.pooling(x)  # Shape: [batch_size, 32, 2048 // 4]
+
+        # Attention
+        x = x.permute(0, 2, 1)  # Shape: [batch_size, 2048 // 4, 32]
+        x, _ = self.attention(x, x, x)  # Self-attention
+
+        # Flatten and fully connected layers
+        x = x.reshape(x.size(0), -1)  # Shape: [batch_size, 32 * (2048 // 4)]
+        x = self.fc_layers(x)  # Shape: [batch_size, 222]
+
         return x
 # ------------------------------------------------------------------------
 # Dataset Class - gets individual records from the training files
