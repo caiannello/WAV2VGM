@@ -27,6 +27,8 @@ except:
 import struct
 import random
 from copy import deepcopy
+from pprint import pprint
+
 # OPL3 Chip class: using Audio emulation from DOSBox ---
 # Adapted from opl_emu-Master: regression test
 # adapted from DRO Trimmer by Laurence Dougal Myers.
@@ -289,9 +291,11 @@ class OPL3:
   def addNamedVecElem(self, v, i, name, val):
     if self.got_reloc:
       x = self.vec_reloc[i]
-    else:
+    else:      
       x = self.vec_elem_names.index(name)
       self.vec_reloc[i] = x
+      #print(f'addNamedVecElem() Add reloc {x=} {name=} reloc idx {i=}')
+
     v[x] = val
     return v
 
@@ -532,7 +536,7 @@ class OPL3:
     # and which operators are associated with each.
     for i in range(0,6):
       if v[i] >= 0.5:
-        c0,c1 = self._4op_chan_combos[i]
+        c0,c1 = deepcopy(self._4op_chan_combos[i])
         chans = self.combineChans(chans,c0,c1)
     idxs = {}
     keyons = {}
@@ -565,6 +569,23 @@ class OPL3:
             if 'AttnLv' in lbl:
               lvls[c].append(vi)
     return idxs,keyons,lvls,freqs
+  # -----------------------------------------------------------------------------
+  # Decompose vector into a per-channel dictionary of OPL3 register settings.
+  # -----------------------------------------------------------------------------
+  def vToChans(self, v):
+    chans = {}
+    idxs, _, _,_ = self.vecGetPermutableIndxs(v,True)
+
+    for chan in idxs:
+      chans[chan] = {}
+      chanidxs = idxs[chan]
+      for idx in chanidxs:
+        ename = self.vec_elem_names[idx]
+        ewid = self.vec_elem_bits[idx]
+        ef = v[idx]
+        eint = self.vecFltToInt(ef,ewid)
+        chans[chan][ename] = eint
+    return chans
   # -----------------------------------------------------------------------------
   def stereoBytesToNumpy(self, bytes_stream):
     stereo_audio = np.frombuffer(bytes_stream, dtype=np.int16)

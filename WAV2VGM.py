@@ -18,7 +18,7 @@ import struct
 import gzip
 import random
 import datetime
-import pprint
+from pprint import pprint
 
 import pygame
 from pygame.locals import *
@@ -574,10 +574,10 @@ def mutatefcn(genome, desperation):
   for c in range(0,numchanges):
     x = random.randint(0,len(genome)-1)
     if random.random()<=(0.1+coup):              # normally a 10% chance to fully re-randomize the element,
-      #if x in lvls:                              # but the chanc3e can go as high as 90% when desperation is high
-      #  genome[x] = opl3.randomAtten()
-      #else:
-      genome[x] = random.random()
+      if x in lvls:                              # but the chanc3e can go as high as 90% when desperation is high
+        genome[x] = opl3.randomAtten()
+      else:
+        genome[x] = random.random()
     else:                                 # 90% chance for an incremental bump.
       if x in freqs:
         f = genome[x]
@@ -860,6 +860,8 @@ this message and the READMEs.  Stay Tuned!
       # result, but you need to leave on vacation for a while
       # until it finishes!
       g = gene.gene(1000, ospect, fitfunc)
+      # todo: should include previous frame's best config
+      # in the genepool!
       for i in range(1000):
         fit, spect = fitfunc(ospect,v)    
         g.add(i, fit, spect, v)      
@@ -937,6 +939,99 @@ this message and the READMEs.  Stay Tuned!
         f.write(regfile)
   
   return NO_QUIT
+
+# -----------------------------------------------------------------------------
+# loading and processing the output of bruteforce
+# -----------------------------------------------------------------------------
+def loadRegfile():
+  global origspect
+  global screen
+  global screen_width
+  global screen_height  
+  global opl3
+  global lvls, freqs
+  ww = int(screen_width)
+  hh = int(screen_height//4)
+
+  print('\n##############################################################################\n')
+
+  # init intermediate output file of opl3 reg settings for
+  # later conversion to a VGM. (TODO!)
+  # See if we have a work-in-progress file.
+  tmpfile = tmpfolder+'reg_files.bin'
+  try:
+    tsize = os.path.getsize(tmpfile)
+  except:
+    tsize = 0
+  # if file full, or empty, or len is not multiple of 512, start over.
+  if (tsize==0) or (tsize%512):
+    print('loadRegfile(): ABORT: No suitable regfile found.\n')
+    return NO_QUIT
+
+  print('loadRegfile(): Starting...\n')
+  infile = open(tmpfile,'rb')
+  num_frames = tsize // 512
+  
+  prevv = None
+  prev_chans = {}
+
+  frame_cfgs = []  # gather opl3 register changes per frame
+
+  # data input loop
+  for frame in range(num_frames):  # for each frame (opl config) in file
+
+    # check if user is a quitter
+    for event in pygame.event.get():
+      if event.type == pygame.QUIT:
+        return HARD_QUIT
+      elif event.type == pygame.KEYDOWN:
+        if event.key == pygame.K_ESCAPE:
+          return SOFT_QUIT
+    
+    # get next synth configuration 
+    regfile = infile.read(512)
+
+    # convert to vector
+    v = opl3.rfToV(regfile)
+
+    # decompose vector into a per-channel 
+    # dictionary of settings
+    chans = opl3.vToChans(v)
+    #pprint(chans,indent=2)
+
+
+    if prevv is not None:
+      # rearrange this vector to align its channels as 
+      # closely as possible similar-sounding channels in 
+      # the previous frame.
+      # This may sound smoother (less clicks) and reduce
+      # the number of register writes needed in the VGM file.
+      pass
+
+    frame_cfgs.append( opl3.vToRf(v) )
+
+    # render the latest synth configuration and draw spectrum
+    wave, tspect = opl3.renderOPLFrame(v)
+    if tspect is not None: 
+      pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
+      ospect = origspect.spectrogram[frame*2]
+      plotTestSpect(ospect,-115,0,(255,255,255))   # plot spect from predicted config
+      plotTestSpect(tspect,-115,0,(255,255,0))   # plot spect from predicted config
+      pygame.display.update()
+      #time.sleep(5)
+    # get ready for next frame
+    prevv = v
+    prev_chans = chans
+
+  # end data input loop
+  infile.close()
+
+  # todo: render output, make VGM.
+
+  # todo: play output
+
+  return NO_QUIT
+
 # -----------------------------------------------------------------------------
 # Make sequence to init the OPL3 chip.
 #
@@ -1367,6 +1462,11 @@ def loop():
         playWave()
       elif event.key == pygame.K_t:
         do_quit = testTrainingSet()
+        if do_quit == HARD_QUIT:
+          return True
+        drawSpect(origspect,0,0,screen_width,screen_height)
+      elif event.key == pygame.K_l:
+        do_quit = loadRegfile()
         if do_quit == HARD_QUIT:
           return True
         drawSpect(origspect,0,0,screen_width,screen_height)
