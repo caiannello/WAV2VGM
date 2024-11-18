@@ -1,3 +1,8 @@
+###############################################################################
+#
+# genetic algorithm stuff.
+#
+###############################################################################
 import random
 import datetime
 from copy import deepcopy
@@ -5,10 +10,7 @@ import math
 
 random.seed(datetime.datetime.now().timestamp())
 
-# genetic algorithm stuff.
-# have methods to put in initial members, with initial fitness scores,
-# while throwing out less-fit initial overpopulation
-
+# a member of the gene pool
 class gmemb:
   id = None
   fit = 9999999
@@ -22,6 +24,7 @@ class gmemb:
   def __str__(self):
     return f'{self.id=} {self.fit=} {self.genome=}'
 
+# the gene pool
 class gene:
   ideal = None
   p = []
@@ -30,15 +33,15 @@ class gene:
   fbest = 999999999
   fworst = -999999999
   fitfunc = None
-
-  # the chromosomes of length 25 might actually be 
-  # two chromosomes of lengths 13 and 12, if the
-  # first element of the sequence is zero.
-
+  # The chromosomes below of length 25 might actually be 
+  # two chromosomes of lengths 13 and 12, if the first 
+  # element of that chromosome is zero.
   chromosome_lens = [25,25,25,12,12,12,25,25,25,12,12,12]  
-
+  # indexes in the above array of the long ones
   long_chromos = []
+  # and the short ones
   short_chromos = []
+
   def __init__(self, p_max=500, ideal=None, fitfunc=None):
     self.p_max = p_max  
     self.ideal = ideal
@@ -50,9 +53,6 @@ class gene:
       else:
         self.short_chromos.append(ofs)
       ofs+=l
-    #print(self.short_chromos, self.long_chromos)
-    #exit()
-
 
   def add(self, id, fit, spect=None, genome=None):  # fitness: lower is better
     if self.p_ct < self.p_max:
@@ -73,8 +73,9 @@ class gene:
       self.fworst = self.p[-1].fit 
 
   # replace the worst half (or more) with new offspring
-  # though crossover and ocassionally, mutation.
-  # calc fitness for all ofspring, re-sort population
+  # though crossover, etc, with occasional mutaations.
+  # Then, re-sort population by fitness.
+
   def generate(self, mutatefcn, desperation):
     splitpoint = len(self.p)//2
     while self.p[splitpoint].spect is None:
@@ -134,24 +135,29 @@ class gene:
             else:
               genome += ga[j:j+cl]
           j+=cl
-      # Lets also swap around any chromosomes that are interchangable to
-      # try to snap out of some local minima
-      swaps = random.randint(0,4)
-      for s in range(swaps):
-        if random.random()>=0.5:
-          ca,cb = random.sample(self.long_chromos,2)
-          a = genome[ca:ca+25]
-          b = genome[cb:cb+25]
-          genome[cb:cb+25] = a
-          genome[ca:ca+25] = b
-        else:
-          ca,cb = random.sample(self.short_chromos,2)
-          a = genome[ca:ca+12]
-          b = genome[cb:cb+12]
-          genome[cb:cb+12] = a
-          genome[ca:ca+12] = b
-      
-      # And possibly impose some mutations
+
+      # Lets also sometimes swap around any chromosomes 
+      # that are interchangable to hopefully snap out of
+      # some local minima
+      '''
+      swaps = 0
+      if random.random()<0.05:
+        swaps = random.randint(1,4)
+        for s in range(swaps):
+          if random.random()>=0.5:
+            ca,cb = random.sample(self.long_chromos,2)
+            a = genome[ca:ca+25]
+            b = genome[cb:cb+25]
+            genome[cb:cb+25] = a
+            genome[ca:ca+25] = b
+          else:
+            ca,cb = random.sample(self.short_chromos,2)
+            a = genome[ca:ca+12]
+            b = genome[cb:cb+12]
+            genome[cb:cb+12] = a
+            genome[ca:ca+12] = b
+      '''
+      # And possibly, impose some mutations
       mutagen = desperation
       if mutagen>4:
         mutagen = 4
@@ -163,10 +169,9 @@ class gene:
       fit, spect = self.fitfunc(self.ideal, genome)
       self.p.append(gmemb(i,fit,spect,genome))
 
-
     # if desperate, do per-chromosome piecewise fitness 
-    # and greatly increase likelihood of mutatation
-    # on worst-fit chromosomes.
+    # and impose upon the worst ones a higher chance of
+    # mutation.
     nukes=0
     jostles = 0
     if desperation>=5:
@@ -206,5 +211,9 @@ class gene:
       self.p.append(gmemb(0,cfit,cspect,cgene))
 
     self.p.sort(key=lambda m: m.fit)
-    print(f'die-off:{splitpoint:3d}, mutants:{mutants:3d}, nukes:{nukes:2d}, jostles:{jostles:2d}',end='')
+    #print(f'die-off:{splitpoint:3d}, mutants:{mutants:3d}, nukes:{nukes:2d}, jostles:{jostles:2d}',end='')
+    print(f'mutants:{mutants:3d}, nukes:{nukes:2d}, jostles:{jostles:2d}',end='')
 
+###############################################################################
+# EOF
+###############################################################################

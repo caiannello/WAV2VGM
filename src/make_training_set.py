@@ -62,12 +62,20 @@ set output, which consists of two files:
 
                 File Name | Record Type | Rec. Description
    -----------------------+-------------+-----------------
-   opl3_training_regs.bin | float[290]  | Synth configuration vector
+   opl3_training_regs.bin | float[222]  | Synth configuration vector
  opl3_training_spects.bin | byte[2048]  | 2048-bin frequency spectrum
 
 The spectra are used as the inputs for training, and the configs are used
 as the ground-truth outputs that we'd like the AI to produce when given
-such a spectrum.
+such a spectrum. The current loss function is mean-squared error, which
+is not ideal, since channels/operators are mostly interchangable. 
+
+Currently, to try to combat this, it's only permuting channel 0, but
+that doesn't solve everything since operators are still interchangeable.
+
+I might have to write a custom loss function which renders the audio using
+the OPL3 emulator and calculates loss based on spectral distance with the
+input, but I bet that would be painfully slow.
 
 *** Note on re-running this utility:
 
@@ -151,15 +159,15 @@ def plotWaveform(wave):
     y1=int((s1+32768)*HH/65536)
     pygame.draw.line(screen, (255,255,0), (x0,y0),(x1,y1))  
 
-# select 2-op/4-op. channel hard coded to zero for now
-
+# Used to change the fuzzer between two-op and four-op synthesis.
+# Channel is hard-coded to zero for now.
 def setComplexity(v, do_4op):
   if do_4op:
     v[0] = 1.0   # chan 0: 4-op
   else:
-    v[0] = 0.0  # channel 0: 2-op
-
+    v[0] = 0.0   # chan 0: 2-op
   # see what elements are permutable per each channel
+  # for the selected mode.
   permidxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(v)
   permidxs = permidxs[0]   # permutable vector elems for selected chan(s)
   lvls = lvls[0]           # operator attenuation levels
@@ -184,7 +192,6 @@ def main():
   print('  permutables: ',permidxs)
   print('op atten. lvs: ',lvls)      
   print('  chan. freqs: ',freqs)
-
   print(f'\nInitial float32[{len(opl_vec)}] Config. Vector:')
   opl3.showVector(opl_vec)
 
@@ -211,15 +218,14 @@ def main():
     rfile = open(REGS_FILEPATH, 'ab')  # list of corresponding 128-byte squished-spectra
 
   # todo: we should somehow ensure the two preexisting files 
-  # are in-sync all the way til the end before keeping them 
-  # before expanding them further or committing to hours-long 
-  # AI training.
-  
+  # are in-sync all the way til the end before building upon 
+  # bad data.
+
   fsz                   = ssize       # keep a running tally of the spectrum file, the larger of the two sets.
   lastszmb              = -1          # for filesize status updates
   iters                 = ssize//2048 # start the iteration count higher if some are on disk
-  freq_sweep_direction  = 1           # we sweep freq back and forth while permuting things
-  perms_this_mode       = 0           # counts iterations before OPL3 clean slate (theres no permutation modes yet)
+  #freq_sweep_direction  = 1           # we sweep freq back and forth while permuting things
+  perms_this_mode       = 0           # iterations elapsed since last mode-change
 
   while True:
     for event in pygame.event.get():
@@ -227,20 +233,6 @@ def main():
         rfile.close()
         sfile.close()
         return 
-    '''
-    if random.random()<0.98:
-      x = random.choice(freqs)
-      o = opl_vec[x]
-      o += freq_sweep_direction * 0.0005
-      if o>1.0:
-        o=1.0
-        freq_sweep_direction = -1
-      elif o<0.0:
-        o=0.0
-        freq_sweep_direction = 1
-      opl_vec[x] = o
-    else:  
-    '''
     x = random.choice(permidxs)
     if x in lvls:
       opl_vec[x]= opl3.randomAtten()
@@ -252,15 +244,11 @@ def main():
     # render a 4096-point waveform and its spectrum
     waveform, tspect = opl3.renderOPLFrame(rf)
     
-    if tspect is not None:    # If noise was audiable, 
-      # write the opl reg configuration vector float[vl]
-      # to the cfg training set file
+    if tspect is not None:    # If audiable, do file output
       sbin = b''
       for f in opl_vec:
         sbin+=struct.pack('<f',f)
-      rfile.write(sbin)
-      # write binary of corresponding spectrum (1 byte-per-bin)
-      # to the spect training set file
+      rfile.write(sbin)       # write cfg vector
       sbin = b''
       for i in range(0,2048):
         try:
@@ -270,14 +258,10 @@ def main():
         if b>255:
           b=255
         b = 255-b
-        sbin+=struct.pack('B',b)    #  0: 0.0 dBFS ... 255: -255.0 dBFS
-      # write 2048-byte spectrum to spectrum file
-      sfile.write(sbin)
-      # note how big the spectrum file is now
-      fsz += len(sbin)
-      # and how many spectrums are in it
-      iters+=1
-
+        sbin+=struct.pack('B',b)    
+      sfile.write(sbin)     # write spect
+      fsz += len(sbin)      # update file size
+      iters+=1              # and record count
 
       j+=1
       if j==DISPLAY_INTERVAL:  # show every 10th set on screen
@@ -306,8 +290,8 @@ def main():
         except:
           # sometimes we get a divide by zero
           pass
-      # check to see if we need to switch complexity modes
-      # or reinit the opl3 registers
+
+      # check to see if we need to switch fuzzing mode
       perms_this_mode += 1      
       if  perms_this_mode % REINIT_PERIOD == 0:
         opl_vec = opl3.rfToV(opl3.initRegFile())

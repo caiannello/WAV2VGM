@@ -424,14 +424,14 @@ class OPL3:
       v = self.addNamedVecElem(v,i*4+(4*18)+12,'AttnLv.o'+str(i),self.vecIntToFlt(attnlv,6))
       v = self.addNamedVecElem(v,i*4+(4*18)+13,'WavSel.o'+str(i),self.vecIntToFlt(ws,3))
 
-    self.got_reloc = True
-    #print(self.vec_reloc)
-    #exit()
-
+    # We have our map of vector names to element indices.
+    # Hopefully it speeds things up.
+    self.got_reloc = True  
     return v
 
-  # Show label:value of each element of the
-  # specified float32[222] vector.
+  # Show element index, label, and value 
+  # for each element of the specified 
+  # float32[222] OPL3 configuration vector.
 
   def showVector(self, v):
     z = zip(self.vec_elem_names, v)
@@ -450,10 +450,6 @@ class OPL3:
       print(l)
     print('] -------------------------------')
 
-
-
-  # opposite of the above operation, also sets some 
-  # defaults that don't concern the AI.
   def RF(self, rf, idx, v):
     try:
       rf = rf[0:idx] + struct.pack('B',v) + rf[idx+1:]
@@ -482,6 +478,7 @@ class OPL3:
 
   # Converts a float[222] synth configuration vector
   # into a 512-byte OPL3 register array
+
   def vToRf(self, v):
     rf = self.initRegFile()
 
@@ -518,7 +515,6 @@ class OPL3:
       ksatnlv = self.getNamedVecElemInt(v,i*4+(4*18)+11,'KSAtnLv.o'+str(i))
       attnlv = self.getNamedVecElemInt(v,i*4+(4*18)+12,'AttnLv.o'+str(i))
       wavsel = self.getNamedVecElemInt(v,i*4+(4*18)+13,'WavSel.o'+str(i))
-      j+=4
       rf = self.RF(rf,0x20|o,0b00100000 | fmul)    
       rf = self.RF(rf,0x40|o,attnlv | (ksatnlv<<6))    
       rf = self.RF(rf,0x60|o,0xff)    
@@ -538,7 +534,6 @@ class OPL3:
       if v[i] >= 0.5:
         c0,c1 = self._4op_chan_combos[i]
         chans = self.combineChans(chans,c0,c1)
-
     idxs = {}
     keyons = {}
     lvls = {}
@@ -548,7 +543,7 @@ class OPL3:
       keyons[c]=[]
       lvls[c]=[]
       freqs[c]=[]
-      # include indexes of fields relevant to this channel
+      # note channel-related vector indexes
       s = f'.c{c}'
       for vi,lbl in enumerate(self.vec_elem_names):
         if lbl.endswith(s):
@@ -560,7 +555,7 @@ class OPL3:
             idxs[c].append(vi)
           if 'Freq' in lbl:
             freqs[c].append(vi)
-      # and each of the operators
+      # and operators related indexes
       opidxs = chans[c]
       for oi in opidxs:
         s = f'.o{oi}'
@@ -569,15 +564,13 @@ class OPL3:
             idxs[c].append(vi)
             if 'AttnLv' in lbl:
               lvls[c].append(vi)
-
     return idxs,keyons,lvls,freqs
-
   # -----------------------------------------------------------------------------
-  def stereoBytesToMonoNumpy(self, bytes_stream):
+  def stereoBytesToNumpy(self, bytes_stream):
     stereo_audio = np.frombuffer(bytes_stream, dtype=np.int16)
     stereo_audio = stereo_audio.reshape(-1, 2)  # Each row is [Left, Right]
     mono_audio = stereo_audio.mean(axis=1, dtype=np.int16)
-    return mono_audio
+    return stereo_audio, mono_audio
 
   # -----------------------------------------------------------------------------
   # Setup the OPL emulator with the specified register values, generate 4096 
@@ -588,6 +581,9 @@ class OPL3:
     self._do_init()
     if cfg is None:
       return None, None
+    #print(type(cfg))
+    #exit()
+
     if isinstance(cfg, dict):  # if config is an old-style opl reg dict
       rf = self.initRegFile()
       keys = list(cfg.keys())
@@ -596,6 +592,13 @@ class OPL3:
         b,r = key
         v = cfg[key]
         self._writeReg(b,r,v)
+    elif isinstance(cfg,np.ndarray):  # config vector from pytoerch
+      try:
+        rf = self.vToRf(cfg)
+      except Exception as e:
+        print(e,cfg)
+        exit()
+      self._writeRegFile(rf)         
     elif isinstance(cfg,list):  # float32[] cfg vector
       try:
         rf = self.vToRf(cfg)
@@ -608,25 +611,7 @@ class OPL3:
     self._output = bytes()
     # render 4096 samples
     self._render_samples(4096)  
-    '''
-    # convert to mono, and note min/max sample for statistics
-    ll = len(self._output)
-    wave = []
-    for i in range(0,ll,4):
-      l=struct.unpack('<h',self._output[i:i+2])[0]
-      r=struct.unpack('<h',self._output[i+2:i+4])[0]
-      if l<self.wave_low:
-        self.wave_low = l
-      if r<self.wave_low:
-        self.wave_low = r
-      if l>self.wave_high:
-        self.wave_high = l
-      if r>self.wave_high:
-        self.wave_high = r
-      wave.append((l+r)//2)  
-    wave = np.array(wave, dtype="int16")
-    '''
-    wave = self.stereoBytesToMonoNumpy(self._output)
+    _, wave = self.stereoBytesToNumpy(self._output)
     # if not flat-line, generate spectrogram
     if wave.sum():
       spec = sp.spect(wav_filename = None, sample_rate=44100,samples=wave,nperseg=4096, quiet=True, clip = False)    
@@ -642,6 +627,14 @@ class OPL3:
     # return waveform and spectrogram, if any
     return wave, spec
 
+  # Render a frequency spectrum for the given configuration and
+  # calculate mean-squared error against the supplied spectrum.    
+  def fitness(self, spectrum, opl_cfg_vect):
+    print()
+    wave, testspect = self.renderOPLFrame(opl_cfg_vect)
+    if testspect is None:
+      return 9999999999.9
+    return np.mean((spectrum - testspect) ** 2)
 
 ###############################################################################
 # ENTRYPOINT

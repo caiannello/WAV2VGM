@@ -18,6 +18,8 @@ import torch.optim as optim
 from   torch.utils.data import DataLoader, random_split
 import matplotlib.pyplot as plt
 from   model_definitions import OPL3Model, OPL3Dataset
+from   OPL3 import OPL3
+
 # ------------------------------------------------------------------------
 # Report device configuration 
 
@@ -47,6 +49,10 @@ print('''
   match.
   ''')
 
+# opl emulator and helper functions for AI training and 
+# inference
+opl3 = OPL3()
+
 # TODO: Allow resumption of training on a preexisting 
 # model, but wipe it and start over if the model changed.
 
@@ -62,6 +68,7 @@ train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
 model = OPL3Model().to(device)
+
 
 # Loss and optimizer
 criterion = nn.MSELoss()

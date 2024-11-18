@@ -98,8 +98,8 @@ if len(sys.argv)==2:
 else:
   # default input file during dev, if no file specified on the commandline.
   wavname = infolder
-  #wavname += 'HAL 9000 - Human Error.wav'
-  wavname += 'JFK Inaguration.wav'
+  wavname += 'HAL 9000 - Human Error.wav'
+  #wavname += 'JFK Inaguration.wav'
   #wavname += 'Ghouls and Ghosts - The Village Of Decay.wav'
   #wavname += 'Portal-Still Alive.wav'
   #wavname += 'Amiga-Leander-Intro.wav'
@@ -564,27 +564,24 @@ lvls = []
 freqs = []
 def mutatefcn(genome, desperation):
   global opl3, lvls,freqs
-
   ncdist = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,3,3,3,3,4,4,5,6,7]
   numchanges = random.choice(ncdist) + desperation
-
   coup = 0
   if desperation>10:
     coup = 0.1*(desperation-10)
     if coup > 0.8:
       coup = 0.8
-
   for c in range(0,numchanges):
     x = random.randint(0,len(genome)-1)
     if random.random()<=(0.1+coup):              # normally a 10% chance to fully re-randomize the element,
-      if x in lvls:                              # but the chanc3e can go as high as 90% when desperation is high
-        genome[x] = opl3.randomAtten()
-      else:
-        genome[x] = random.random()
+      #if x in lvls:                              # but the chanc3e can go as high as 90% when desperation is high
+      #  genome[x] = opl3.randomAtten()
+      #else:
+      genome[x] = random.random()
     else:                                 # 90% chance for an incremental bump.
       if x in freqs:
         f = genome[x]
-        f += random.random() * 0.0005
+        f += (random.random() * 0.0005) - 0.00025
         if f < 0.0:
           f = 0.0
         elif f > 1.0:
@@ -594,13 +591,15 @@ def mutatefcn(genome, desperation):
         wb = opl3.vec_elem_bits[x]
         mag = (1<<wb)-1
         i = opl3.vecFltToInt(genome[x],wb)
-        i += random.randint(1,2)-1
+        if random.randint(0,1):
+          i+=1
+        else:
+          i-=1
         if i<0:
           i=0
         elif i>mag:
           i=mag
         genome[x] = opl3.vecIntToFlt(i,wb)
-
   return genome
 # -----------------------------------------------------------------------------
 # fitness function for genetic algorithm.
@@ -662,7 +661,7 @@ def gradientDescent(ospect, lastfit, lastspect, v):
 #
 # Returns the best OPL3 configuration achieved after max iterations.
 # -----------------------------------------------------------------------------
-def improveMatch(roi, ospect, g):
+def improveMatch(frame, num_frames, ospect, g):
   global screen,screen_width,screen_height
   global GENE_MAX_GENERATIONS
   global desperation
@@ -681,7 +680,7 @@ def improveMatch(roi, ospect, g):
                   # and we allow more mutations
   lx = ly = px = py = 0
   tstart = time.time()
-  for iter in range(0,GENE_MAX_GENERATIONS):    
+  for gen in range(0,GENE_MAX_GENERATIONS):    
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  
         return opl3.vToRf(g.p[0].genome), HARD_QUIT
@@ -700,7 +699,7 @@ def improveMatch(roi, ospect, g):
       tnow = time.time()
       tdelt = tnow-tstart
       tstart = tnow  
-      print(f'Generation: {iter:3d}, fit:{fit:20.15f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
+      print(f'Frame:{frame}/{num_frames}, Gen.:{gen:3d}, fit:{fit:8.3f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
       sys.stdout.flush()
       if fit!=lastfit:
         desperation = 0
@@ -712,9 +711,9 @@ def improveMatch(roi, ospect, g):
         plotTestSpect(ospect,-115.0,0,gcolor=(255,255,255),yofs=yofs)
         plotText("Test Spectrum",8,yofs+8)
         plotText("Fitness",8,(screen_height-1)-24)    
-      px = iter*ww//GENE_MAX_GENERATIONS
+      px = gen*ww//GENE_MAX_GENERATIONS
       py = (screen_height-1)-int(hh*fit/initfit)
-      if iter>0:
+      if gen>0:
         pygame.draw.line(screen,(0,255,0),(lx,ly),(px,py))
       lx=px
       ly=py
@@ -800,6 +799,8 @@ this message and the READMEs.  Stay Tuned!
       start_roi = (tsize//512)*2
       print('Found working file. Resuming.\n')
 
+  num_frames = slen//2
+
   # brute-force loop: -----
   # for every-other spectrum in original spectrogram:
   for roi in range(start_roi,slen,2): 
@@ -811,16 +812,16 @@ this message and the READMEs.  Stay Tuned!
       elif event.type == pygame.KEYDOWN:
         if event.key == pygame.K_ESCAPE:
           return SOFT_QUIT
+
     # show progess
-    pct = roi*100.0/slen
-    s = f'Brute Force: frame {roi//2}/{slen//2} - Progress: {pct:6.2f}% '
+    pct = roi * 100.0 / slen
+    frame = roi // 2
+    s = f'Brute Force: frame {frame}/{num_frames} - Progress: {pct:6.2f}% '
     s += '-'*(80-len(s))
     print(s)
 
     # this is the spectrum we want recreate.
     ospect = origspect.spectrogram[roi]    
-    pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
-    plotTestSpect(ospect,-115,0,(255,255,255))   # plot original spect
 
     if (brute):
       peaks = getRankedPeaks(ospect, -115.0, 0, True, 5, 5)
@@ -835,7 +836,7 @@ this message and the READMEs.  Stay Tuned!
         if pheight<-48.0:
           break
         vfreq = pfreq/OPL3_MAX_FREQ
-        vamp = 1.0 - (pheight/-48.0)
+        vamp = pheight/-48  # -48dBFS...0 dBFS : float 1.0...0.0
         vvals.append([float(vfreq),float(vamp)])
       ch = 0
       v = opl3.rfToV(opl3.initRegFile())
@@ -851,7 +852,9 @@ this message and the READMEs.  Stay Tuned!
           v = opl3.setNamedVecElemInt(v,f'KSAtnLv.o{o}',2) # some attenuation at higher freqs
         ch+=1
         if ch>=18:
-          break   
+          break 
+      regfile = opl3.vToRf(v)
+      #'''  
       # Put the preliminary result through super-slow genetic 
       # annealing process. Gives a fascinatingly more complex,
       # result, but you need to leave on vacation for a while
@@ -860,12 +863,13 @@ this message and the READMEs.  Stay Tuned!
       for i in range(1000):
         fit, spect = fitfunc(ospect,v)    
         g.add(i, fit, spect, v)      
-      regfile,do_quit = improveMatch(roi, ospect, g)
+      regfile, do_quit = improveMatch(frame, num_frames, ospect, g)
       if do_quit:
         print('Brute force - quitting!')
         if do_quit == SOFT_QUIT:
           drawSpect(origspect,0,0,screen_width,screen_height)
         return do_quit
+      #'''
 
     # NEURAL NETWORK FUN ------------------
     if ai:    
@@ -907,10 +911,9 @@ this message and the READMEs.  Stay Tuned!
         fit, spect = fitfunc(ospect, genome)    
         g.add(i, fit, spect, genome)
       print('Starting permutations.')
-
       # Do a (slow) genetic annealing process to
       # try to improve the result. 
-      regfile,do_quit = improveMatch(roi, ospect, g)
+      regfile, do_quit = improveMatch(frame, num_frames, ospect, g)
 
       if do_quit:
         print('Brute force - quitting!')
@@ -921,11 +924,11 @@ this message and the READMEs.  Stay Tuned!
 
     # give register cfg to opl3 emulator and render a spectrum
     wave, tspect = opl3.renderOPLFrame(regfile)
-
     if tspect is not None: 
+      pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
+      plotTestSpect(ospect,-115,0,(255,255,255))   # plot original spect      
       plotTestSpect(tspect,-115,0,(255,255,0))   # plot spect from predicted config
-    
-    pygame.display.update()
+      pygame.display.update()
 
     # Output our best register file result to intermediate file, 
     # for later conversion to VGM. (TODO!!)
@@ -1260,26 +1263,17 @@ def fastAnalyze():
 
   print(f'{slices} slices, {len(rows)} frames')
   print(f'{min_height=} {max_height=}')
-  print('\nPlaying synthesized result...',end='')
-  sys.stdout.flush()
-  s=[]
-  gs=[]
-  for i in range(0,len(opl3._output),4):
-    l=struct.unpack('<h',opl3._output[i:i+2])[0]
-    r=struct.unpack('<h',opl3._output[i+2:i+4])[0]
-    s.append(np.array([l,r],dtype='int16'))
-    gs.append( (l+r)//2)
-
-  gs = np.array(gs,dtype='int16')
-  outspect = sp.spect(wav_filename=None,samples=gs,nperseg=4096,quiet=False,clip=True)
+  stereo_wave, mono_wave = opl3.stereoBytesToNumpy(opl3._output)
+  print('\nMaking spectrogram of result...')
+  outspect = sp.spect(wav_filename=None,samples=mono_wave,nperseg=4096,quiet=False,clip=True)
   drawSpect(outspect,0,0,screen_width,screen_height)
-
-  s=pygame.sndarray.make_sound(np.array(s))
-  pygame.mixer.Sound.play(s)
+  stereo_wave=pygame.sndarray.make_sound(stereo_wave)
+  print('\nPlaying result...',end='')
+  sys.stdout.flush()
+  pygame.mixer.Sound.play(stereo_wave)
   while pygame.mixer.get_busy(): 
     pygame.time.Clock().tick(10)
-
-  print('Done')
+  print('Done!')
 # -----------------------------------------------------------------------------
 # iterates through the test set (spectrum + cfg) and verifies that the each 
 # spectrun is the result of that synth config.
