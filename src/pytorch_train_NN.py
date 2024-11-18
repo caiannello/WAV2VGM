@@ -31,11 +31,11 @@ dir_path            = os.path.dirname(os.path.realpath(__file__))
 
 # Parameters
 
-spect_filepath      = dir_path+'/../training_sets/opl3_training_spects.bin'  # training test data
-synthcfg_filepath   = dir_path+'/../training_sets/opl3_training_regs.bin'    # training truth truth
+spect_filepath      = dir_path+'/../training_sets/bopl3_training_spects.bin'  # training test data
+synthcfg_filepath   = dir_path+'/../training_sets/bopl3_training_regs.bin'    # training truth truth
 model_filepath      = dir_path+'/../models/torch_model.pth'                  # trained model output
 batch_size = 32
-epochs = 4        # 50   keep this low until we settle on the dataset and model
+epochs = 50
 early_stopping_patience = 5
 
 print('''
@@ -125,6 +125,13 @@ for epoch in range(epochs):
             print("Early stopping triggered.")
             break
 
+# plotting the Loss graph
+
+plt.plot(train_losses, label='Training Loss')
+plt.plot(val_losses, label='Validation Loss')
+plt.legend()
+plt.show()
+
 # Load the best model
 model.load_state_dict(torch.load(model_filepath))
 
@@ -136,16 +143,63 @@ for sample_input, true_output in val_loader_iter:
     predicted_output = model(sample_input)
     print("Sample Input:", sample_input.cpu().numpy())
     print("True Output:", true_output.cpu().numpy())
-    print("Predicted Output:", predicted_output.detach().numpy())
+    print("Predicted Output:", predicted_output.cpu().detach().numpy())
     break
-
-# plotting the Loss graph
-
-plt.plot(train_losses, label='Training Loss')
-plt.plot(val_losses, label='Validation Loss')
-plt.legend()
-plt.show()
 
 print('Program END.')
 # ------------------------------------------------------------------------
 # ------------------------------------------------------------------------
+
+
+
+'''
+# todo: custom loss function on CPU, model on GPU:
+
+1. Define Your Custom Loss Function:
+Python
+
+
+import torch
+import torch.nn as nn
+
+class MyCustomLoss(nn.Module):
+    def __init__(self):
+        super(MyCustomLoss, self).__init__()
+
+    def forward(self, output, target):
+        # Ensure tensors are on CPU
+        output = output.cpu()
+        target = target.cpu()
+
+        # Implement your custom loss calculation here
+        loss = ... 
+
+        return loss
+
+2. Instantiate Your Loss Function and Model:
+Python
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+model = MyModel().to(device)
+criterion = MyCustomLoss()
+
+3. Use the Loss Function in Your Training Loop:
+Python
+
+
+for epoch in range(num_epochs):
+    for i, data in enumerate(train_loader):
+        inputs, labels = data
+        inputs, labels = inputs.to(device), labels.to(device)
+
+        optimizer.zero_grad()
+        outputs = model(inputs)
+
+        # Move outputs to CPU for loss calculation
+        loss = criterion(outputs.cpu(), labels.cpu())
+
+        loss.backward()
+        optimizer.step()
+'''

@@ -315,6 +315,17 @@ class OPL3:
     bw = self.vec_elem_bits[x]
     return self.vecFltToInt(f,bw)
 
+  def setNamedVecElemFloat(self, v, name,f):
+    x = self.vec_elem_names.index(name)    
+    v[x] = f
+    return v
+
+  def setNamedVecElemInt(self, v, name,i):
+    x = self.vec_elem_names.index(name)
+    bw = self.vec_elem_bits[x]
+    v[x] = self.vecIntToFlt(i,bw)
+    return v
+
   # Convert regions of interest from a 512-byte 
   # OPL3 register file into float32[222] synth configuration
   # vector for use during AI training and infrerencing. 

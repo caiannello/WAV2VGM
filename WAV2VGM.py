@@ -82,6 +82,7 @@ tmpfolder = 'temp/'
 infolder = 'input/'
 outfolder = 'output/'
 modelsfolder = "models/"
+trainfolder = "training_sets/"
 
 origspect=None
 
@@ -715,7 +716,7 @@ def improveMatch(roi, ospect, g):
         plotText("Test Spectrum",8,yofs+8)
         plotText("Fitness",8,(screen_height-1)-24)    
       px = iter*ww//GENE_MAX_GENERATIONS
-      py = (screen_height-1)-(hh*fit//initfit)
+      py = (screen_height-1)-int(hh*fit/initfit)
       if iter>0:
         pygame.draw.line(screen,(0,255,0),(lx,ly),(px,py))
       lx=px
@@ -837,11 +838,41 @@ this message and the READMEs.  Stay Tuned!
         if pheight<-48.0:
           break
         vfreq = pfreq/OPL3_MAX_FREQ
-        vamp = 1.0 - (pheight+48.0)/48.0
+        vamp = 1.0 - (pheight/-48.0)
         vvals.append([float(vfreq),float(vamp)])
-      print(vvals)
-
-      regfile = None
+      ch = 0
+      #wspect = deepcopy(ospect)
+      v = opl3.rfToV(opl3.initRegFile())
+      idxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(v,inc_keyons=True)      
+      for vfreq, vamp in vvals:
+        # chan freq
+        # chan am
+        # opa  1x
+        # opb  lvl
+        v = opl3.setNamedVecElemFloat(v,f'Freq.c{ch}',vfreq)      
+        v = opl3.setNamedVecElemFloat(v,f'KeyOn.c{ch}',1.0)   
+        v = opl3.setNamedVecElemFloat(v,f'SnTyp.c{ch}',1.0)   
+        oidxs = opidxs_per_chan[ch]
+        for q,o in enumerate(oidxs):
+          v = opl3.setNamedVecElemFloat(v,f'AttnLv.o{o}',vamp)
+          v = opl3.setNamedVecElemInt(v,f'FMul.o{o}',1)
+          v = opl3.setNamedVecElemInt(v,f'KSAtnLv.o{o}',2)
+        ch+=1
+        if ch>=18:
+          break   
+      #regfile = opl3.vToRf(v)
+      #'''   
+      g = gene.gene(1000, ospect, fitfunc)
+      for i in range(1000):
+        fit, spect = fitfunc(ospect,v)    
+        g.add(i, fit, spect, v)      
+      regfile,do_quit = improveMatch(roi, ospect, g)
+      if do_quit:
+        print('Brute force - quitting!')
+        if do_quit == SOFT_QUIT:
+          drawSpect(origspect,0,0,screen_width,screen_height)
+        return do_quit
+      #'''
 
     # NEURAL NETWORK FUN ------------------
     if ai:    
@@ -909,7 +940,6 @@ this message and the READMEs.  Stay Tuned!
       with open(tmpfile,'ab') as f:
         f.write(regfile)
   
-  drawSpect(origspect,0,0,screen_width,screen_height)
   return NO_QUIT
 # -----------------------------------------------------------------------------
 # Make sequence to init the OPL3 chip.
@@ -1258,6 +1288,62 @@ def fastAnalyze():
 
   print('Done')
 # -----------------------------------------------------------------------------
+# iterates through the test set (spectrum + cfg) and verifies that the each 
+# spectrun is the result of that synth config.
+# The spect bins were converted to bytes like this:  uint8=255-(-dBFS)&0xFF
+# And each config is a float32[222] synth config vector.
+# -----------------------------------------------------------------------------
+def testTrainingSet():
+  global screen_width
+  global screen_height  
+  global opl3
+  global lvls, freqs
+  ww = int(screen_width)
+  hh = int(screen_height//4)
+  REDRAW_INTERVAL = 500
+  worstfit = None
+  print('testTrainingSet(): Starting.')
+  with open(trainfolder+'opl3_training_spects.bin','rb') as sfile:
+    with open(trainfolder+'opl3_training_regs.bin','rb') as rfile:
+      row = 0
+      while True:
+        for event in pygame.event.get():
+          if event.type == pygame.QUIT:  # Usually wise to be able to close your program.
+            return HARD_QUIT
+          elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+              return SOFT_QUIT
+        bs = sfile.read(2048) # bin spect
+        br = rfile.read(222*4) # bin regs
+        # check for end of file
+        if not isinstance(bs,bytes) or len(bs)!=2048:
+          print('EOF')
+          break
+        # conv spect to dBFS[]
+        spect = []
+        for i in range(0,2048):          
+          spect.append(-(255-bs[i]))
+        # and vect to float32[222]
+        v = []
+        for i in range(0,222*4,4):
+          f = struct.unpack('<f',br[i:i+4])[0]
+          v.append(f)
+        # compare output spect ro provides spect
+        fit,tspect = fitfunc(spect,v)
+        if worstfit is None or fit>worstfit:
+          worstfit = fit
+        row+=1
+        if not row % REDRAW_INTERVAL:
+          pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
+          plotTestSpect(spect,-115,0,(255,255,255))   # plot original spect
+          if tspect is not None: 
+            plotTestSpect(tspect,-115,0,(255,255,0))   # plot spect from predicted config
+          pygame.display.update()
+          print(f'testTrainingSet(): Row:{row:9}, Fit:{round(fit)}, Worst:{round(worstfit)}')
+
+  print('testTrainingSet(): Ending.')
+  return NO_QUIT
+# -----------------------------------------------------------------------------
 # arrows move cursor, if any, which could be either on spectrum or spectrogram
 # spectrum: 
 #     l/r select spectrum (vertical cursor on spectrogram)
@@ -1286,22 +1372,32 @@ def loop():
         doquit = analyzePeakRuns()
         if doquit == HARD_QUIT:
           return True
+        drawSpect(origspect,0,0,screen_width,screen_height)
       elif event.key == pygame.K_f:
         fastAnalyze()
+        drawSpect(origspect,0,0,screen_width,screen_height)
       elif event.key == pygame.K_p:
         playWave()
+      elif event.key == pygame.K_t:
+        do_quit = testTrainingSet()
+        if do_quit == HARD_QUIT:
+          return True
+        drawSpect(origspect,0,0,screen_width,screen_height)
       elif event.key == pygame.K_n:
         do_quit = bruteForce(brute=False, genetic=False, ai=True)
         if do_quit == HARD_QUIT:
           return True
+        drawSpect(origspect,0,0,screen_width,screen_height)
       elif event.key == pygame.K_g:
         do_quit = bruteForce(brute=False, genetic=True, ai=False)
         if do_quit == HARD_QUIT:
           return True
+        drawSpect(origspect,0,0,screen_width,screen_height)
       elif event.key == pygame.K_b:
         do_quit = bruteForce(brute=True, genetic=False, ai=False)
         if do_quit == HARD_QUIT:
           return True
+        drawSpect(origspect,0,0,screen_width,screen_height)
       elif event.key == pygame.K_d:
         allthumbs = {}
         for roi in range(44,46):

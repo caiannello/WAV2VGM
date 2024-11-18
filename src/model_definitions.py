@@ -11,9 +11,11 @@ class OPL3Model(nn.Module):
         super(OPL3Model, self).__init__()        
         # Convolutional layers for local feature extraction
         self.conv_layers = nn.Sequential(
-            nn.Conv1d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=2),
+            nn.Conv1d(in_channels=1, out_channels=32, kernel_size=5, stride=1, padding=2),
             nn.ReLU(),
-            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=7, stride=1, padding=3),
+            nn.Conv1d(in_channels=32, out_channels=64, kernel_size=7, stride=1, padding=3),
+            nn.ReLU(),
+            nn.Conv1d(in_channels=64, out_channels=64, kernel_size=9, stride=1, padding=4),
             nn.ReLU()
         )
 
@@ -21,15 +23,15 @@ class OPL3Model(nn.Module):
         self.pooling = nn.MaxPool1d(kernel_size=4, stride=4)
 
         # Attention for global feature extraction
-        self.attention = nn.MultiheadAttention(embed_dim=32, num_heads=4, batch_first=True)
+        self.attention = nn.MultiheadAttention(embed_dim=64, num_heads=4, batch_first=True)
 
         # Fully connected layers for synthesizer configuration output
         self.fc_layers = nn.Sequential(
-            nn.Linear(32 * (2048 // 4), 512),  # Adjust input size based on pooling
+            nn.Linear(64 * (2048 // 4), 1024),  # Adjust input size based on pooling
             nn.ReLU(),
-            nn.Linear(512, 256),
+            nn.Linear(1024, 512),
             nn.ReLU(),
-            nn.Linear(256, 222)  # Final output for synthesizer configuration
+            nn.Linear(512, 222)  # Final output for synthesizer configuration
         )
 
     def forward(self, x):
@@ -37,17 +39,17 @@ class OPL3Model(nn.Module):
         x = x.unsqueeze(1)  # Shape: [batch_size, 1, 2048]
 
         # Convolutional layers
-        x = self.conv_layers(x)  # Shape: [batch_size, 32, 2048]
+        x = self.conv_layers(x)  # Shape: [batch_size, 64, 2048]
 
         # Pooling
-        x = self.pooling(x)  # Shape: [batch_size, 32, 2048 // 4]
+        x = self.pooling(x)  # Shape: [batch_size, 64, 2048 // 4]
 
         # Attention
-        x = x.permute(0, 2, 1)  # Shape: [batch_size, 2048 // 4, 32]
+        x = x.permute(0, 2, 1)  # Shape: [batch_size, 2048 // 4, 64]
         x, _ = self.attention(x, x, x)  # Self-attention
 
         # Flatten and fully connected layers
-        x = x.reshape(x.size(0), -1)  # Shape: [batch_size, 32 * (2048 // 4)]
+        x = x.reshape(x.size(0), -1)  # Shape: [batch_size, 64 * (2048 // 4)]
         x = self.fc_layers(x)  # Shape: [batch_size, 222]
 
         return x

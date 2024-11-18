@@ -310,7 +310,7 @@ def main():
       # or reinit the opl3 registers
       perms_this_mode += 1      
       if  perms_this_mode % REINIT_PERIOD == 0:
-        #opl_vec = opl3.rfToV(opl3.initRegFile())
+        opl_vec = opl3.rfToV(opl3.initRegFile())
         perms_this_mode = 0
         do_4op = not do_4op
         if do_4op:

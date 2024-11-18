@@ -116,7 +116,14 @@ following (lowercase) keys:
   n - Tries to make a VGM using the convolutional neural-network model at
       'models/torch_model.pth'
 
-  g - Tries to make a VGM using the slow-as-heck genetic algorithm! 
+  g - Tries to make a VGM using the slow-as-heck genetic algorithm! The
+      initial population is completely randomized. Super slowwwww.
+
+  b - Brute force. This uses the original basic additive synthesis method
+      to generate the initial spectra, but then the genetic algo gets a
+      crack at it and starts making several changes which improve the
+      fit. (Super slow, but I'm anxious to get through a whole conversion
+      and hear this, because the graphs look exciting!)
 
   Clicking on the displayed spectrogram sets some cursors, but these don't yet 
   do anything, and might even crash the app! (Still kinda fun to play with.)
