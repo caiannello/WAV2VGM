@@ -573,6 +573,13 @@ class OPL3:
     return idxs,keyons,lvls,freqs
 
   # -----------------------------------------------------------------------------
+  def stereoBytesToMonoNumpy(self, bytes_stream):
+    stereo_audio = np.frombuffer(bytes_stream, dtype=np.int16)
+    stereo_audio = stereo_audio.reshape(-1, 2)  # Each row is [Left, Right]
+    mono_audio = stereo_audio.mean(axis=1, dtype=np.int16)
+    return mono_audio
+
+  # -----------------------------------------------------------------------------
   # Setup the OPL emulator with the specified register values, generate 4096 
   # audio samples, and return resultant frequency spectrum.
   # -----------------------------------------------------------------------------
@@ -589,18 +596,19 @@ class OPL3:
         b,r = key
         v = cfg[key]
         self._writeReg(b,r,v)
-    elif isinstance(cfg,list):
+    elif isinstance(cfg,list):  # float32[] cfg vector
       try:
         rf = self.vToRf(cfg)
       except Exception as e:
         print(e,cfg)
         exit()
-      self._writeRegFile(rf)    # assume it is a float32[] cfg vector
+      self._writeRegFile(rf)   
     else:
-      self._writeRegFile(cfg)   # assume it is a bytes[512]
+      self._writeRegFile(cfg)   # bytes[512] opl3 register file
     self._output = bytes()
     # render 4096 samples
     self._render_samples(4096)  
+    '''
     # convert to mono, and note min/max sample for statistics
     ll = len(self._output)
     wave = []
@@ -617,6 +625,8 @@ class OPL3:
         self.wave_high = r
       wave.append((l+r)//2)  
     wave = np.array(wave, dtype="int16")
+    '''
+    wave = self.stereoBytesToMonoNumpy(self._output)
     # if not flat-line, generate spectrogram
     if wave.sum():
       spec = sp.spect(wav_filename = None, sample_rate=44100,samples=wave,nperseg=4096, quiet=True, clip = False)    

@@ -613,11 +613,8 @@ def fitfunc(ospect, v):
   wave, tspect = opl3.renderOPLFrame(v)
   if tspect is None:
     return 999999999999, None
-  dif = 0
-  for i in range(2048):
-    a = ospect[i]-tspect[i]
-    dif += a*a
-  return math.sqrt(dif), tspect
+  mse = np.mean((ospect - tspect) ** 2)    
+  return mse, tspect
 # -----------------------------------------------------------------------------
 # Given an OPL3 cfg vector and an ideal spectrum, goes through every element 
 # of the vector, tweaking each element up/down by one count, retaining any
@@ -841,27 +838,24 @@ this message and the READMEs.  Stay Tuned!
         vamp = 1.0 - (pheight/-48.0)
         vvals.append([float(vfreq),float(vamp)])
       ch = 0
-      #wspect = deepcopy(ospect)
       v = opl3.rfToV(opl3.initRegFile())
       idxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(v,inc_keyons=True)      
-      for vfreq, vamp in vvals:
-        # chan freq
-        # chan am
-        # opa  1x
-        # opb  lvl
-        v = opl3.setNamedVecElemFloat(v,f'Freq.c{ch}',vfreq)      
-        v = opl3.setNamedVecElemFloat(v,f'KeyOn.c{ch}',1.0)   
-        v = opl3.setNamedVecElemFloat(v,f'SnTyp.c{ch}',1.0)   
+      for vfreq, vamp in vvals:  # for the loudest peaks, assign a sine
+        v = opl3.setNamedVecElemFloat(v,f'Freq.c{ch}',vfreq)  # Peak freq    
+        v = opl3.setNamedVecElemFloat(v,f'KeyOn.c{ch}',1.0)   # Key ON
+        v = opl3.setNamedVecElemFloat(v,f'SnTyp.c{ch}',1.0)   # 2-op AM
         oidxs = opidxs_per_chan[ch]
         for q,o in enumerate(oidxs):
-          v = opl3.setNamedVecElemFloat(v,f'AttnLv.o{o}',vamp)
-          v = opl3.setNamedVecElemInt(v,f'FMul.o{o}',1)
-          v = opl3.setNamedVecElemInt(v,f'KSAtnLv.o{o}',2)
+          v = opl3.setNamedVecElemFloat(v,f'AttnLv.o{o}',vamp)  # amplitude
+          v = opl3.setNamedVecElemInt(v,f'FMul.o{o}',1)   # op phase multiple
+          v = opl3.setNamedVecElemInt(v,f'KSAtnLv.o{o}',2) # some attenuation at higher freqs
         ch+=1
         if ch>=18:
           break   
-      #regfile = opl3.vToRf(v)
-      #'''   
+      # Put the preliminary result through super-slow genetic 
+      # annealing process. Gives a fascinatingly more complex,
+      # result, but you need to leave on vacation for a while
+      # until it finishes!
       g = gene.gene(1000, ospect, fitfunc)
       for i in range(1000):
         fit, spect = fitfunc(ospect,v)    
@@ -872,7 +866,6 @@ this message and the READMEs.  Stay Tuned!
         if do_quit == SOFT_QUIT:
           drawSpect(origspect,0,0,screen_width,screen_height)
         return do_quit
-      #'''
 
     # NEURAL NETWORK FUN ------------------
     if ai:    
@@ -892,7 +885,7 @@ this message and the READMEs.  Stay Tuned!
           predicted_output = model(sample_input)
       # make prediction
       predicted_output = predicted_output.numpy().flatten()
-      # convert output cfg vector to an opl3 register dictionary    
+      # convert output cfg vector to a byte[512] opl3 register file    
       regfile = opl3.vToRf(predicted_output)
     # -------------------------------------
 
