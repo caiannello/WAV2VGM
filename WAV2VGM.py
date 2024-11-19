@@ -385,7 +385,7 @@ def analyzePeakRuns():
     # draws a vertical slice of spectral peaks over top of 
     # spectrum[roi] of the spectrogram, and returns a list of peak 
     # (freq,height) values sorted by descending height
-    peaks = overlayPeaksOnSpectrum(roi,slen,origspect.spectrogram[roi])
+    peaks = overlayPeaksOnSpectrum(roi,slen,origspect.spectrogram[roi][0:-1])
 
     # see which peaks are new, and which are continuations of prior peaks.
     # New ones set a new named run-record, and others get appended onto the
@@ -419,7 +419,7 @@ def analyzePeakRuns():
 
   draw_runs = False
   if draw_runs:     # draw the freq runs in dif colors
-    ll = len(origspect.spectrogram[roi])
+    ll = len(origspect.spectrogram[roi][0:-1])
     ww = int(screen_width)
     hh = int(screen_height) - T_AXIS_HEIGHT
     hsr =  (origspect.sample_rate/2)/SPECT_VERT_SCALE
@@ -479,8 +479,8 @@ def newROI():
   global screen_height
   global roi
   drawSpect(origspect,0,0,screen_width,screen_height)
-  if roi>=0 and roi<len(origspect.spectrogram):
-    plotTestSpect(origspect.spectrogram[roi],origspect.minval,origspect.maxval)
+  if roi>=0 and roi<len(origspect.spectrogram[0:-1]):
+    plotTestSpect(origspect.spectrogram[roi][0:-1],origspect.minval,origspect.maxval)
   pygame.display.update()
 # -----------------------------------------------------------------------------  
 # WIP UI stuff
@@ -602,19 +602,6 @@ def mutatefcn(genome, desperation):
         genome[x] = opl3.vecIntToFlt(i,wb)
   return genome
 # -----------------------------------------------------------------------------
-# fitness function for genetic algorithm.
-#
-# Renders the opl waveform for the given genome (opl register set), then 
-# returns the difference between its frequency spectrum and ospect, the ideal.
-# -----------------------------------------------------------------------------
-def fitfunc(ospect, v):
-  global opl3
-  wave, tspect = opl3.renderOPLFrame(v)
-  if tspect is None:
-    return 999999999999, None
-  mse = np.mean((ospect - tspect) ** 2)    
-  return mse, tspect
-# -----------------------------------------------------------------------------
 # Given an OPL3 cfg vector and an ideal spectrum, goes through every element 
 # of the vector, tweaking each element up/down by one count, retaining any
 # changes that happened to improve the fit. 
@@ -635,7 +622,7 @@ def gradientDescent(ospect, lastfit, lastspect, v):
     if i>0:
       fa = opl3.vecIntToFlt(i-1,bw)
       newv[x] = fa
-      fita, specta = fitfunc(ospect, newv)
+      fita, specta = opl3.fitness(ospect, newv)
       if fita<lastfit:
         lastfit = fita
         newv[x] = fa
@@ -645,7 +632,7 @@ def gradientDescent(ospect, lastfit, lastspect, v):
     if i<mag:
       fb = opl3.vecIntToFlt(i+1,bw)
       newv[x] = fb
-      fitb, spectb = fitfunc(ospect, newv)
+      fitb, spectb = opl3.fitness(ospect, newv)
       if fitb<lastfit:
         lastfit = fitb
         newv[x] = fb
@@ -653,93 +640,163 @@ def gradientDescent(ospect, lastfit, lastspect, v):
         tweaks+=1
         continue
     newv[x]=f  # no improvement, revert to orig val 
-  print(f', tweaks: {tweaks} ',end='')
   return pid, lastfit, lastspect, newv, tweaks
 # -----------------------------------------------------------------------------
 # repeatedly calls calls the genetic algorithm's generate() method and shows
 # the current best result.
 #
-# Returns the best OPL3 configuration achieved after max iterations.
+# Returns the best OPL3 configuration achieved after either max iterations 
+# reached, or we stopped seeing improvements for a long time,
 # -----------------------------------------------------------------------------
 def improveMatch(frame, num_frames, ospect, g):
   global screen,screen_width,screen_height
   global GENE_MAX_GENERATIONS
   global desperation
-  # width and height of test spectrs drawn here
+  # width and height of test spectrum displayed during genetic loop
   ww = screen_width
   hh = screen_height//4
-  # y ofs to draw position
+  # y ofs to draw position of the display
   yofs = screen_height//2
 
-  # blank whole bottom half so we can show convengence plor in bottom quarter
+  # blank whole bottom half so we can show convengence plot in bottom quarter
   pygame.draw.rect(screen,(0,0,0),(0,yofs,ww,hh*2))  
-  initfit = None
-  lastfit = 0
-  lastspect = None
-  desperation = 0 # when even gradient descent fails, desperation goes up,
-                  # and we allow more mutations
+  desperation = 0 # increased when even gradient descent fails. 
   lx = ly = px = py = 0
   tstart = time.time()
+
+
+  initfit = None
+
+  best_spect = None
+  best_vec = None
+  best_fit = None
+
   for gen in range(0,GENE_MAX_GENERATIONS):    
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  
-        return opl3.vToRf(g.p[0].genome), HARD_QUIT
+        return None, HARD_QUIT
       elif event.type == pygame.KEYDOWN:
         if event.key == pygame.K_ESCAPE:
-          return opl3.vToRf(g.p[0].genome), SOFT_QUIT
+          return None, SOFT_QUIT
         elif event.key == pygame.K_RETURN:
-          return opl3.vToRf(g.p[0].genome), NO_QUIT
-
+          regfile = opl3.vToRf(best_vec)        
+          return regfile, NO_QUIT
+    
+    g.re_sort()
+    hero = g.p[0]
+    hgenome = hero.genome
+    hfit = hero.fit
+    hspect = hero.spect
     improved = False 
-    tspect = g.p[0].spect
-    if tspect is not None:
-      fit = g.p[0].fit
+    
+    if hspect is not None:
       if initfit is None:
-        initfit = fit
+        initfit = hfit
+      if best_fit is None:
+        best_fit = hfit + 1
       tnow = time.time()
       tdelt = tnow-tstart
       tstart = tnow  
-      print(f'Frame:{frame}/{num_frames}, Gen.:{gen:3d}, fit:{fit:8.3f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
+      print(f'Frame:{frame}/{num_frames}, Gen.:{gen:3d}, fit:{hfit:8.3f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
       sys.stdout.flush()
-      if fit!=lastfit:
-        desperation = 0
+      
+      if hfit < best_fit:
         improved = True
-        lastfit=fit
-        lastspect = deepcopy(tspect)
+        best_spect = deepcopy(hspect)
+        best_vec = deepcopy(hgenome)    
+        best_fit = hfit
+        desperation = 0
         pygame.draw.rect(screen,(0,0,0),(0,yofs,ww,hh))  
-        plotTestSpect(tspect,-115.0,0,gcolor=(255,255,0),yofs=yofs)
         plotTestSpect(ospect,-115.0,0,gcolor=(255,255,255),yofs=yofs)
+        plotTestSpect(hspect,-115.0,0,gcolor=(255,255,0),yofs=yofs)
         plotText("Test Spectrum",8,yofs+8)
         plotText("Fitness",8,(screen_height-1)-24)    
+      
       px = gen*ww//GENE_MAX_GENERATIONS
-      py = (screen_height-1)-int(hh*fit/initfit)
+      py = (screen_height-1)-int(hh*hfit/initfit)
       if gen>0:
         pygame.draw.line(screen,(0,255,0),(lx,ly),(px,py))
       lx=px
       ly=py
       pygame.display.update()
-    g.generate(mutatefcn, desperation)
-    # do an (expensive) gradient descent step for this generation
-    # fitness didnt improve at all during the previous one.
-    if (not improved) and (lastspect is not None):
-      pid, fit, spect, newv, tweaks = gradientDescent(ospect, lastfit, lastspect, g.p[0].genome)
+    tweaks = -1
+    if (not improved) and (best_spect is not None):
+      pid, fit, spect, newv, tweaks = gradientDescent(ospect, hfit, hspect, hgenome)
       if tweaks == 0:
         desperation+=1
         if desperation >= 50:
           print(' -- Moving on.\n')
           break
-      g.add(pid, fit, spect, newv)
-    print()
+      else:      
+        g.add(pid, newv)    
+    g.generate(mutatefcn, desperation)
+    if tweaks != -1:
+      print(f', tweaks: {tweaks}')
+    else:
+      print()
 
-  vec = g.p[0].genome
-  regfile = opl3.vToRf(vec)
+  fitness, tspect = opl3.fitness(ospect, best_vec)
+  print(f'improveMatch(): Best fit was {best_fit}.  verification {fitness}')
+  regfile = opl3.vToRf(best_vec)
   return regfile, NO_QUIT
+
+# -----------------------------------------------------------------------------
+# brute force - start with sum of sines, then do GA
+# -----------------------------------------------------------------------------
+def do_brute(frame, num_frames, ospect):
+  peaks = getRankedPeaks(ospect, -115.0, 0, True, 5, 5)
+  
+  # make original estimate by setting the OPL to 
+  # generate a sine wave per each spectral peak
+  l = ''
+  vvals = []
+  for chan,p in enumerate(peaks):
+    pheight, pfreq, _, _, _ = p
+    if chan>=12:
+      break
+    if pheight<-48.0:
+      break
+    vfreq = pfreq/OPL3_MAX_FREQ
+    vamp = pheight/-48  # -48dBFS...0 dBFS : float 1.0...0.0
+    vvals.append([float(vfreq),float(vamp)])  
+  ch = 0
+  v = opl3.rfToV(opl3.initRegFile())
+  idxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(v,inc_keyons=True)      
+  for vfreq, vamp in vvals:  # for the loudest peaks, assign a sine
+    v = opl3.setNamedVecElemFloat(v,f'Freq.c{ch}',vfreq)  # Peak freq    
+    v = opl3.setNamedVecElemFloat(v,f'KeyOn.c{ch}',1.0)   # Key ON
+    v = opl3.setNamedVecElemFloat(v,f'SnTyp.c{ch}',1.0)   # 2-op AM
+    oidxs = opidxs_per_chan[ch]
+    for q,o in enumerate(oidxs):
+      v = opl3.setNamedVecElemFloat(v,f'AttnLv.o{o}',vamp)  # amplitude
+      v = opl3.setNamedVecElemInt(v,f'FMul.o{o}',1)   # op phase multiple
+      v = opl3.setNamedVecElemInt(v,f'KSAtnLv.o{o}',2) # some attenuation at higher freqs
+    ch+=1
+    if ch>=18:
+      break
+  #do_quit = NO_QUIT
+  #regfile  = opl3.vToRf(v)
+  # improve on original estimate with GA
+  # todo: should include previous frame's 
+  # best config in the genepool!
+  g = gene.gene(1000, ospect)
+  for i in range(10):
+    g.add(0, v)
+  '''
+  print('---')
+  for gm in g.p:
+    print(gm)
+  print('^^^')
+  '''
+  regfile, do_quit = improveMatch(frame, num_frames, ospect, g)
+
+  return regfile, do_quit
 # -----------------------------------------------------------------------------
 # WIP EXPERIMENT- 
 # Tries to brute-force a solution using either a (slow) genetic algorithm or a 
 # convolutional neural-network.
 # -----------------------------------------------------------------------------
-def bruteForce(brute = False, genetic = False, ai = True):
+def bruteForce(brute = False, genetic = False, ai = False):
   global origspect
   global screen
   global screen_width
@@ -821,60 +878,17 @@ this message and the READMEs.  Stay Tuned!
     print(s)
 
     # this is the spectrum we want recreate.
-    ospect = origspect.spectrogram[roi]    
+    ospect = deepcopy(origspect.spectrogram[roi][0:-1])
 
-    if (brute):
-      peaks = getRankedPeaks(ospect, -115.0, 0, True, 5, 5)
-      # (peak_height,peak_freq,peak_x,peak_y,peak_prominence)
-      # make a sine wave per peak
-      l = ''
-      vvals = []
-      for chan,p in enumerate(peaks):
-        pheight, pfreq, _, _, _ = p
-        if chan>=12:
-          break
-        if pheight<-48.0:
-          break
-        vfreq = pfreq/OPL3_MAX_FREQ
-        vamp = pheight/-48  # -48dBFS...0 dBFS : float 1.0...0.0
-        vvals.append([float(vfreq),float(vamp)])
-      ch = 0
-      v = opl3.rfToV(opl3.initRegFile())
-      idxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(v,inc_keyons=True)      
-      for vfreq, vamp in vvals:  # for the loudest peaks, assign a sine
-        v = opl3.setNamedVecElemFloat(v,f'Freq.c{ch}',vfreq)  # Peak freq    
-        v = opl3.setNamedVecElemFloat(v,f'KeyOn.c{ch}',1.0)   # Key ON
-        v = opl3.setNamedVecElemFloat(v,f'SnTyp.c{ch}',1.0)   # 2-op AM
-        oidxs = opidxs_per_chan[ch]
-        for q,o in enumerate(oidxs):
-          v = opl3.setNamedVecElemFloat(v,f'AttnLv.o{o}',vamp)  # amplitude
-          v = opl3.setNamedVecElemInt(v,f'FMul.o{o}',1)   # op phase multiple
-          v = opl3.setNamedVecElemInt(v,f'KSAtnLv.o{o}',2) # some attenuation at higher freqs
-        ch+=1
-        if ch>=18:
-          break 
-      regfile = opl3.vToRf(v)
-      #'''  
-      # Put the preliminary result through super-slow genetic 
-      # annealing process. Gives a fascinatingly more complex,
-      # result, but you need to leave on vacation for a while
-      # until it finishes!
-      g = gene.gene(1000, ospect, fitfunc)
-      # todo: should include previous frame's best config
-      # in the genepool!
-      for i in range(1000):
-        fit, spect = fitfunc(ospect,v)    
-        g.add(i, fit, spect, v)      
-      regfile, do_quit = improveMatch(frame, num_frames, ospect, g)
+    if brute:
+      print('@@@ BRUTE')
+      regfile, do_quit = do_brute(frame, num_frames, ospect)
       if do_quit:
-        print('Brute force - quitting!')
-        if do_quit == SOFT_QUIT:
-          drawSpect(origspect,0,0,screen_width,screen_height)
         return do_quit
-      #'''
-
+    '''
     # NEURAL NETWORK FUN ------------------
-    if ai:    
+    if ai:          
+      print('@@@ AI')
       # reformat the original spectrum to 
       # an input vector for the inferencer
       inp = []
@@ -899,8 +913,8 @@ this message and the READMEs.  Stay Tuned!
     if genetic:
       # Init an empty population for the genetic algorithm,
       # noting the spectrum we hope to achieve.
-      print('# GENETIC ANNEALING - Making initial population (1000), please wait...')
-      g = gene.gene(1000, ospect, fitfunc)
+      print('@@@ GENE')
+      g = gene.gene(1000, ospect)
       v = opl3.rfToV(opl3.initRegFile())
       idxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(v,inc_keyons=True)
       for i in range(0,1000):
@@ -910,8 +924,7 @@ this message and the READMEs.  Stay Tuned!
             genome[x] = opl3.randomAtten()
           else:
             genome[x] = random.random()
-        fit, spect = fitfunc(ospect, genome)    
-        g.add(i, fit, spect, genome)
+        g.add(i, genome)
       print('Starting permutations.')
       # Do a (slow) genetic annealing process to
       # try to improve the result. 
@@ -923,6 +936,7 @@ this message and the READMEs.  Stay Tuned!
           drawSpect(origspect,0,0,screen_width,screen_height)
         return do_quit
     # -------------------------------------
+    '''
 
     # give register cfg to opl3 emulator and render a spectrum
     wave, tspect = opl3.renderOPLFrame(regfile)
@@ -935,6 +949,9 @@ this message and the READMEs.  Stay Tuned!
     # Output our best register file result to intermediate file, 
     # for later conversion to VGM. (TODO!!)
     if regfile is not None:
+      v = opl3.rfToV(regfile)
+      fitness, spect = opl3.fitness(ospect, v)
+      print(f'output fitness: {fitness=:8.2f}')
       with open(tmpfile,'ab') as f:
         f.write(regfile)
   
@@ -973,9 +990,8 @@ def loadRegfile():
   num_frames = tsize // 512
   
   prevv = None
-  prev_chans = {}
 
-  frame_cfgs = []  # gather opl3 register changes per frame
+  frame_vects = []  # gather opl3 register changes per frame
 
   # data input loop
   for frame in range(num_frames):  # for each frame (opl config) in file
@@ -990,38 +1006,33 @@ def loadRegfile():
     
     # get next synth configuration 
     regfile = infile.read(512)
-
-    # convert to vector
     v = opl3.rfToV(regfile)
 
-    # decompose vector into a per-channel 
-    # dictionary of settings
-    chans = opl3.vToChans(v)
-    #pprint(chans,indent=2)
-
-
     if prevv is not None:
-      # rearrange this vector to align its channels as 
-      # closely as possible similar-sounding channels in 
-      # the previous frame.
+      # rearrange this vector to align its channels to
+      # similar-sounding channels of the predecessor.
       # This may sound smoother (less clicks) and reduce
       # the number of register writes needed in the VGM file.
       pass
 
-    frame_cfgs.append( opl3.vToRf(v) )
+    ospect = origspect.spectrogram[frame*2][0:-1]
+    fitness,spect = opl3.fitness(ospect, v)
+    print(f'frame: {frame+1}/{num_frames}: {fitness=:8.2f}')
 
+    '''
     # render the latest synth configuration and draw spectrum
     wave, tspect = opl3.renderOPLFrame(v)
     if tspect is not None: 
       pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
-      ospect = origspect.spectrogram[frame*2]
       plotTestSpect(ospect,-115,0,(255,255,255))   # plot spect from predicted config
       plotTestSpect(tspect,-115,0,(255,255,0))   # plot spect from predicted config
       pygame.display.update()
       #time.sleep(5)
+    '''
     # get ready for next frame
+
+    frame_vects.append( v )
     prevv = v
-    prev_chans = chans
 
   # end data input loop
   infile.close()
@@ -1287,7 +1298,7 @@ def fastAnalyze():
   ll = len(origspect.spectrogram)
   tt = origspect.maxtime - origspect.mintime
   for r in range(0,ll):
-    all_peaks.append(getRankedPeaks(origspect.spectrogram[r],minv,maxv,True))
+    all_peaks.append(getRankedPeaks(origspect.spectrogram[r][0:-1],minv,maxv,True))
     slices+=1
   max_amp = 0
   min_amp = 9999999
@@ -1411,7 +1422,7 @@ def testTrainingSet():
           f = struct.unpack('<f',br[i:i+4])[0]
           v.append(f)
         # compare output spect ro provides spect
-        fit,tspect = fitfunc(spect,v)
+        fit,tspect = opl3.fitness(spect,v)
         if worstfit is None or fit>worstfit:
           worstfit = fit
         row+=1
@@ -1488,7 +1499,7 @@ def loop():
       elif event.key == pygame.K_d:
         allthumbs = {}
         for roi in range(44,46):
-          allthumbs[roi] = spectThumbnails(origspect.spectrogram[roi])
+          allthumbs[roi] = spectThumbnails(origspect.spectrogram[roi][0:-1])
         pprint.pprint(allthumbs, indent=2)
       elif event.key == pygame.K_UP:
         if last_clicked == CLICKED_SPECTROGRAM:

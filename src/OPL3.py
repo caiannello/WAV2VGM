@@ -288,56 +288,46 @@ class OPL3:
       f=1.0
     return f
 
-  def addNamedVecElem(self, v, i, name, val):
+  # Used by rfToV to set vec element from regfile element
+  def rfToVecAddNamedElem(self, v, rf_idx, name, val):
     if self.got_reloc:
-      x = self.vec_reloc[i]
+      x = self.vec_reloc[rf_idx] # use lookup table of rf idx to vec idx
     else:      
-      x = self.vec_elem_names.index(name)
-      self.vec_reloc[i] = x
-      #print(f'addNamedVecElem() Add reloc {x=} {name=} reloc idx {i=}')
-
+      x = self.vec_elem_names.index(name) # initially, lookup by name,
+      self.vec_reloc[rf_idx] = x          # and cache result for next time speedup
     v[x] = val
     return v
 
-  def getNamedVecElemFloat(self, v, i, name):
-    if self.got_reloc:
-      x = self.vec_reloc[i]
-    else:
-      x = self.vec_elem_names.index(name)
-      self.vec_reloc[i] = x
+  # Used by vToRf to get a vec element as float
+  def vecToRfGetNamedFloat(self, v, rf_idx, name):
+    x = self.vec_reloc[rf_idx]  
     f = v[x]
     return f
 
-  def getNamedVecElemInt(self, v, i, name):
-    if self.got_reloc:
-      x = self.vec_reloc[i]
-    else:
-      x = self.vec_elem_names.index(name)
-      self.vec_reloc[i] = x
-
+  # Used by vToRf to get a vec element as int
+  def vecToRfGetNamedInt(self, v, rf_idx, name):
+    x = self.vec_reloc[rf_idx] 
     f = v[x]
     bw = self.vec_elem_bits[x]
-    return self.vecFltToInt(f,bw)
+    return self.vecFltToInt(f,bw)  
 
+
+  # helper: set named vector element from float
   def setNamedVecElemFloat(self, v, name,f):
     x = self.vec_elem_names.index(name)    
     v[x] = f
     return v
 
-  def setNamedVecElemInt(self, v, name,i):
+  # set named vector element from int
+  def setNamedVecElemInt(self, v, name,intval):
     x = self.vec_elem_names.index(name)
     bw = self.vec_elem_bits[x]
-    v[x] = self.vecIntToFlt(i,bw)
+    v[x] = self.vecIntToFlt(intval,bw)
     return v
 
-  # Convert regions of interest from a 512-byte 
-  # OPL3 register file into float32[222] synth configuration
-  # vector for use during AI training and infrerencing. 
-  #
-  # The first time though, we also build an array of what 
-  # each vector element is named: 
-  # (e.g. fnum+block for channel 0 gets called "Freq.c0" 
-  # operator 3 output attenuation level gets called "AttnLv.o3")
+  # Convert a 512-byte OPL3 register file into a 
+  # float32[222] synth configuration vector for 
+  # use during AI training and infrerencing. 
 
   def rfToV(self, rf):
     #
@@ -368,7 +358,7 @@ class OPL3:
       else:
         val = 0.0
       name = names[j]
-      v = self.addNamedVecElem(v,j,name,val)
+      v = self.rfToVecAddNamedElem(v,j,name,val)
       mask>>=1
       j+=1
     #
@@ -400,10 +390,10 @@ class OPL3:
       fbcnt = (c>>1)&7
       fnum = flow|(fhi<<8)
       freq = self.fNumBlkToFreq(fnum, block)
-      v = self.addNamedVecElem(v,i*4+6,'KeyOn.c'+str(i) , float(keyon))
-      v = self.addNamedVecElem(v,i*4+7,'Freq.c'+str(i)  , freq / self.OPL3_MAX_FREQ)
-      v = self.addNamedVecElem(v,i*4+8,'FbCnt.c'+str(i) , self.vecIntToFlt(fbcnt,3))
-      v = self.addNamedVecElem(v,i*4+9,'SnTyp.c'+str(i) , float(sntype))
+      v = self.rfToVecAddNamedElem(v,i*4+6,'KeyOn.c'+str(i) , float(keyon))
+      v = self.rfToVecAddNamedElem(v,i*4+7,'Freq.c'+str(i)  , freq / self.OPL3_MAX_FREQ)
+      v = self.rfToVecAddNamedElem(v,i*4+8,'FbCnt.c'+str(i) , self.vecIntToFlt(fbcnt,3))
+      v = self.rfToVecAddNamedElem(v,i*4+9,'SnTyp.c'+str(i) , float(sntype))
     #
     # Operator related things come last:
     #
@@ -423,10 +413,10 @@ class OPL3:
       ws = rf[0xE0|o]&7
       attnlv = f&63
       ksatnlv = (f>>6)&3
-      v = self.addNamedVecElem(v,i*4+(4*18)+10,'FMul.o'+str(i),self.vecIntToFlt(fmul,4))
-      v = self.addNamedVecElem(v,i*4+(4*18)+11,'KSAtnLv.o'+str(i),self.vecIntToFlt(ksatnlv,2))
-      v = self.addNamedVecElem(v,i*4+(4*18)+12,'AttnLv.o'+str(i),self.vecIntToFlt(attnlv,6))
-      v = self.addNamedVecElem(v,i*4+(4*18)+13,'WavSel.o'+str(i),self.vecIntToFlt(ws,3))
+      v = self.rfToVecAddNamedElem(v,i*4+(4*18)+10,'FMul.o'+str(i),self.vecIntToFlt(fmul,4))
+      v = self.rfToVecAddNamedElem(v,i*4+(4*18)+11,'KSAtnLv.o'+str(i),self.vecIntToFlt(ksatnlv,2))
+      v = self.rfToVecAddNamedElem(v,i*4+(4*18)+12,'AttnLv.o'+str(i),self.vecIntToFlt(attnlv,6))
+      v = self.rfToVecAddNamedElem(v,i*4+(4*18)+13,'WavSel.o'+str(i),self.vecIntToFlt(ws,3))
 
     # We have our map of vector names to element indices.
     # Hopefully it speeds things up.
@@ -492,17 +482,17 @@ class OPL3:
     for j in range(0,6):
       i<<=1
       name = names[j]
-      if self.getNamedVecElemFloat(v,j,name)>=0.5:
+      if self.vecToRfGetNamedFloat(v,j,name)>=0.5:
         i|=1
     rf = self.RF(rf, 0x104, i)
 
     # channel-related things
     for i in range(0,18):
       o = self.chan_reg_ofs[i]
-      keyon = self.getNamedVecElemInt(v,i*4+6,'KeyOn.c'+str(i))
-      freq = self.getNamedVecElemFloat(v,i*4+7,'Freq.c'+str(i))
-      fbcnt = self.getNamedVecElemInt(v,i*4+8,'FbCnt.c'+str(i))
-      sntyp = self.getNamedVecElemInt(v,i*4+9,'SnTyp.c'+str(i))
+      keyon = self.vecToRfGetNamedInt(v,i*4+6,'KeyOn.c'+str(i))
+      freq = self.vecToRfGetNamedFloat(v,i*4+7,'Freq.c'+str(i))
+      fbcnt = self.vecToRfGetNamedInt(v,i*4+8,'FbCnt.c'+str(i))
+      sntyp = self.vecToRfGetNamedInt(v,i*4+9,'SnTyp.c'+str(i))
 
       fnum, blk = self.freqToFNumBlk( freq * self.OPL3_MAX_FREQ )
       flow = fnum&0xff
@@ -515,10 +505,10 @@ class OPL3:
     # operator-related_things:
     for i in range(0,36):
       o=self.op_reg_ofs[i]
-      fmul = self.getNamedVecElemInt(v,i*4+(4*18)+10,'FMul.o'+str(i))
-      ksatnlv = self.getNamedVecElemInt(v,i*4+(4*18)+11,'KSAtnLv.o'+str(i))
-      attnlv = self.getNamedVecElemInt(v,i*4+(4*18)+12,'AttnLv.o'+str(i))
-      wavsel = self.getNamedVecElemInt(v,i*4+(4*18)+13,'WavSel.o'+str(i))
+      fmul = self.vecToRfGetNamedInt(v,i*4+(4*18)+10,'FMul.o'+str(i))
+      ksatnlv = self.vecToRfGetNamedInt(v,i*4+(4*18)+11,'KSAtnLv.o'+str(i))
+      attnlv = self.vecToRfGetNamedInt(v,i*4+(4*18)+12,'AttnLv.o'+str(i))
+      wavsel = self.vecToRfGetNamedInt(v,i*4+(4*18)+13,'WavSel.o'+str(i))
       rf = self.RF(rf,0x20|o,0b00100000 | fmul)    
       rf = self.RF(rf,0x40|o,attnlv | (ksatnlv<<6))    
       rf = self.RF(rf,0x60|o,0xff)    
@@ -570,12 +560,9 @@ class OPL3:
               lvls[c].append(vi)
     return idxs,keyons,lvls,freqs
   # -----------------------------------------------------------------------------
-  # Decompose vector into a per-channel dictionary of OPL3 register settings.
-  # -----------------------------------------------------------------------------
   def vToChans(self, v):
     chans = {}
     idxs, _, _,_ = self.vecGetPermutableIndxs(v,True)
-
     for chan in idxs:
       chans[chan] = {}
       chanidxs = idxs[chan]
@@ -637,7 +624,7 @@ class OPL3:
     if wave.sum():
       spec = sp.spect(wav_filename = None, sample_rate=44100,samples=wave,nperseg=4096, quiet=True, clip = False)    
       # we want only the first spectrum of spectogram
-      spec = spec.spectrogram[0]
+      spec = spec.spectrogram[0][0:-1]
       for b in spec:
         if b < self.bin_low:
           self.bin_low = b
@@ -651,12 +638,10 @@ class OPL3:
   # Render a frequency spectrum for the given configuration and
   # calculate mean-squared error against the supplied spectrum.    
   def fitness(self, spectrum, opl_cfg_vect):
-    print()
     wave, testspect = self.renderOPLFrame(opl_cfg_vect)
     if testspect is None:
-      return 9999999999.9
-    return np.mean((spectrum - testspect) ** 2)
-
+      return 9999999999.9, None
+    return np.mean((spectrum - testspect) ** 2), testspect
 ###############################################################################
 # ENTRYPOINT
 ###############################################################################

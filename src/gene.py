@@ -7,6 +7,12 @@ import random
 import datetime
 from copy import deepcopy
 import math
+try:
+  from .OPL3 import OPL3
+except:
+  from OPL3 import OPL3
+
+opl3 = OPL3()
 
 random.seed(datetime.datetime.now().timestamp())
 
@@ -32,7 +38,7 @@ class gene:
   p_max = 500
   fbest = 999999999
   fworst = -999999999
-  fitfunc = None
+
   # The chromosomes below of length 25 might actually be 
   # two chromosomes of lengths 13 and 12, if the first 
   # element of that chromosome is zero.
@@ -42,10 +48,9 @@ class gene:
   # and the short ones
   short_chromos = []
 
-  def __init__(self, p_max=500, ideal=None, fitfunc=None):
+  def __init__(self, p_max=500, ideal=None):
     self.p_max = p_max  
-    self.ideal = ideal
-    self.fitfunc = fitfunc
+    self.ideal = deepcopy(ideal)
     ofs = 0
     for i,l in enumerate(self.chromosome_lens):
       if l==25:
@@ -54,23 +59,25 @@ class gene:
         self.short_chromos.append(ofs)
       ofs+=l
 
-  def add(self, id, fit, spect=None, genome=None):  # fitness: lower is better
+  def add(self, id, genome):  # fitness: lower is better
+    ng = deepcopy(genome)
+    fit,spect = opl3.fitness(self.ideal, ng)
     if self.p_ct < self.p_max:
-      gm = gmemb(id,fit,spect,genome)
+      gm = gmemb(id,fit,spect,ng)
       self.p.append(gm)
       if fit<self.fbest:
         self.fbest=fit
       if fit>self.fworst:
         self.fworst=fit
-      self.p_ct+=1
     elif fit < self.fworst:
-      gm = gmemb(id,fit,spect,genome)
+      gm = gmemb(id,fit,spect,ng)
       self.p.append(gm)
       self.p.sort(key=lambda m: m.fit)
       self.p = self.p[0:-1]
       self.p_ct = self.p_max
       self.fbest = self.p[0].fit 
       self.fworst = self.p[-1].fit 
+    self.p_ct = len(self.p)
 
   # replace the worst half (or more) with new offspring
   # though crossover, etc, with occasional mutaations.
@@ -166,7 +173,7 @@ class gene:
         genome = mutatefcn(genome, desperation)      
       
       # Add the child to population.
-      fit, spect = self.fitfunc(self.ideal, genome)
+      fit, spect = opl3.fitness(self.ideal, genome)
       self.p.append(gmemb(i,fit,spect,genome))
 
     # if desperate, do per-chromosome piecewise fitness 
@@ -184,7 +191,7 @@ class gene:
       for cl in self.chromosome_lens:
         chromo = genome[j:j+cl]
         pgenome = [0.00]*j + chromo + [0.00]*(len(genome) - (j+cl))
-        pfit, _ = self.fitfunc(self.ideal, pgenome)
+        pfit, _ = opl3.fitness(self.ideal, pgenome)
         fsum+=pfit
         pfits.append((k,j,cl,pfit))
         j+=cl
@@ -207,13 +214,21 @@ class gene:
               velem = 1.0
             cgene[pos+j] = velem
       #print(f"{pfits=}")
-      cfit, cspect = self.fitfunc(self.ideal, cgene)
+      cfit, cspect = opl3.fitness(self.ideal, cgene)
       self.p.append(gmemb(0,cfit,cspect,cgene))
 
     self.p.sort(key=lambda m: m.fit)
-    #print(f'die-off:{splitpoint:3d}, mutants:{mutants:3d}, nukes:{nukes:2d}, jostles:{jostles:2d}',end='')
+    self.p_ct = len(self.p)
+    self.fbest = self.p[0].fit 
+    self.fworst = self.p[-1].fit 
     print(f'mutants:{mutants:3d}, nukes:{nukes:2d}, jostles:{jostles:2d}',end='')
 
+  def re_sort(self):
+    self.p.sort(key=lambda m: m.fit)
+    self.p_ct = len(self.p)
+    self.fbest = self.p[0].fit 
+    self.fworst = self.p[-1].fit 
+    
 ###############################################################################
 # EOF
 ###############################################################################
