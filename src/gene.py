@@ -18,23 +18,20 @@ random.seed(datetime.datetime.now().timestamp())
 
 # a member of the gene pool
 class gmemb:
-  id = None
   fit = 9999999
   genome = None
   spect = None
-  def __init__(self,id,fit,spect=None,genome=None):
-    self.id = id
+  def __init__(self,fit,spect,genome):
     self.fit = fit
     self.spect = spect
     self.genome = genome
   def __str__(self):
-    return f'{self.id=} {self.fit=} {self.genome=}'
+    return f'Im a {self.fit=}!'
 
 # the gene pool
 class gene:
   ideal = None
   p = []
-  p_ct = 0
   p_max = 500
   fbest = 999999999
   fworst = -999999999
@@ -59,25 +56,12 @@ class gene:
         self.short_chromos.append(ofs)
       ofs+=l
 
-  def add(self, id, genome):  # fitness: lower is better
+  def add(self, genome):  # fitness: lower is better
     ng = deepcopy(genome)
-    fit,spect = opl3.fitness(self.ideal, ng)
-    if self.p_ct < self.p_max:
-      gm = gmemb(id,fit,spect,ng)
-      self.p.append(gm)
-      if fit<self.fbest:
-        self.fbest=fit
-      if fit>self.fworst:
-        self.fworst=fit
-    elif fit < self.fworst:
-      gm = gmemb(id,fit,spect,ng)
-      self.p.append(gm)
-      self.p.sort(key=lambda m: m.fit)
-      self.p = self.p[0:-1]
-      self.p_ct = self.p_max
-      self.fbest = self.p[0].fit 
-      self.fworst = self.p[-1].fit 
-    self.p_ct = len(self.p)
+    fit, spect = opl3.fitness(self.ideal, ng)
+    gm = gmemb(fit,spect,ng)
+    self.p.append(gm)
+    self.re_sort()
 
   # replace the worst half (or more) with new offspring
   # though crossover, etc, with occasional mutaations.
@@ -174,7 +158,8 @@ class gene:
       
       # Add the child to population.
       fit, spect = opl3.fitness(self.ideal, genome)
-      self.p.append(gmemb(i,fit,spect,genome))
+      gm = gmemb(fit,spect,deepcopy(genome))
+      self.p.append(gm)
 
     # if desperate, do per-chromosome piecewise fitness 
     # and impose upon the worst ones a higher chance of
@@ -182,15 +167,14 @@ class gene:
     nukes=0
     jostles = 0
     if desperation>=5:
-      genome = self.p[0].genome
-      cgene = deepcopy(genome)
+      cgene = deepcopy(self.p[0].genome)
       j = 0
       k = 0
       pfits = []
       fsum = 0
       for cl in self.chromosome_lens:
-        chromo = genome[j:j+cl]
-        pgenome = [0.00]*j + chromo + [0.00]*(len(genome) - (j+cl))
+        chromo = cgene[j:j+cl]
+        pgenome = [0.00]*j + chromo + [0.00]*(len(cgene) - (j+cl))
         pfit, _ = opl3.fitness(self.ideal, pgenome)
         fsum+=pfit
         pfits.append((k,j,cl,pfit))
@@ -215,20 +199,18 @@ class gene:
             cgene[pos+j] = velem
       #print(f"{pfits=}")
       cfit, cspect = opl3.fitness(self.ideal, cgene)
-      self.p.append(gmemb(0,cfit,cspect,cgene))
+      self.p.append(gmemb(cfit,cspect,cgene))
 
-    self.p.sort(key=lambda m: m.fit)
-    self.p_ct = len(self.p)
-    self.fbest = self.p[0].fit 
-    self.fworst = self.p[-1].fit 
+    self.re_sort()
     print(f'mutants:{mutants:3d}, nukes:{nukes:2d}, jostles:{jostles:2d}',end='')
 
   def re_sort(self):
+    ct = len(self.p)
     self.p.sort(key=lambda m: m.fit)
-    self.p_ct = len(self.p)
+    if ct>self.p_max:
+      self.p = self.p[0:self.p_max]
     self.fbest = self.p[0].fit 
     self.fworst = self.p[-1].fit 
-    
 ###############################################################################
 # EOF
 ###############################################################################

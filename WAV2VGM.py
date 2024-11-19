@@ -604,11 +604,11 @@ def mutatefcn(genome, desperation):
 # -----------------------------------------------------------------------------
 # Given an OPL3 cfg vector and an ideal spectrum, goes through every element 
 # of the vector, tweaking each element up/down by one count, retaining any
-# changes that happened to improve the fit. 
+# changes that improved the fit. 
 # Expensive, so only done by the genetic algorithm for generations where no 
 # improved offspring were seen.
 # -----------------------------------------------------------------------------
-def gradientDescent(ospect, lastfit, lastspect, v):
+def autoTweak(ospect, lastfit, lastspect, v):
   newv = deepcopy(v)
   vl = len(newv)
   pid = 0  
@@ -660,7 +660,7 @@ def improveMatch(frame, num_frames, ospect, g):
 
   # blank whole bottom half so we can show convengence plot in bottom quarter
   pygame.draw.rect(screen,(0,0,0),(0,yofs,ww,hh*2))  
-  desperation = 0 # increased when even gradient descent fails. 
+  desperation = 0 # increased when even auto tweak fails. 
   lx = ly = px = py = 0
   tstart = time.time()
 
@@ -699,19 +699,19 @@ def improveMatch(frame, num_frames, ospect, g):
       tstart = tnow  
       print(f'Frame:{frame}/{num_frames}, Gen.:{gen:3d}, fit:{hfit:8.3f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
       sys.stdout.flush()
-      
       if hfit < best_fit:
         improved = True
-        best_spect = deepcopy(hspect)
-        best_vec = deepcopy(hgenome)    
         best_fit = hfit
         desperation = 0
-        pygame.draw.rect(screen,(0,0,0),(0,yofs,ww,hh))  
-        plotTestSpect(ospect,-115.0,0,gcolor=(255,255,255),yofs=yofs)
-        plotTestSpect(hspect,-115.0,0,gcolor=(255,255,0),yofs=yofs)
-        plotText("Test Spectrum",8,yofs+8)
-        plotText("Fitness",8,(screen_height-1)-24)    
-      
+      # show current best spectrum
+      best_spect = deepcopy(hspect)
+      best_vec = deepcopy(hgenome)    
+      pygame.draw.rect(screen,(0,0,0),(0,yofs,ww,hh))  
+      plotTestSpect(ospect,-115.0,0,gcolor=(255,255,255),yofs=yofs)
+      plotTestSpect(hspect,-115.0,0,gcolor=(255,255,0),yofs=yofs)
+      plotText("Test Spectrum",8,yofs+8)
+      plotText("Fitness",8,(screen_height-1)-24)    
+      # show fitness plot in green      
       px = gen*ww//GENE_MAX_GENERATIONS
       py = (screen_height-1)-int(hh*hfit/initfit)
       if gen>0:
@@ -719,16 +719,18 @@ def improveMatch(frame, num_frames, ospect, g):
       lx=px
       ly=py
       pygame.display.update()
+    
     tweaks = -1
     if (not improved) and (best_spect is not None):
-      pid, fit, spect, newv, tweaks = gradientDescent(ospect, hfit, hspect, hgenome)
+      pid, fit, spect, newv, tweaks = autoTweak(ospect, hfit, hspect, hgenome)
       if tweaks == 0:
         desperation+=1
         if desperation >= 50:
           print(' -- Moving on.\n')
           break
       else:      
-        g.add(pid, newv)    
+        g.add(newv)  
+        g.re_sort()  
     g.generate(mutatefcn, desperation)
     if tweaks != -1:
       print(f', tweaks: {tweaks}')
@@ -743,7 +745,7 @@ def improveMatch(frame, num_frames, ospect, g):
 # -----------------------------------------------------------------------------
 # brute force - start with sum of sines, then do GA
 # -----------------------------------------------------------------------------
-def do_brute(frame, num_frames, ospect):
+def do_brute(frame, num_frames, ospect, prior_best):
   peaks = getRankedPeaks(ospect, -115.0, 0, True, 5, 5)
   
   # make original estimate by setting the OPL to 
@@ -781,7 +783,9 @@ def do_brute(frame, num_frames, ospect):
   # best config in the genepool!
   g = gene.gene(1000, ospect)
   for i in range(10):
-    g.add(0, v)
+    g.add(v)
+    if prior_best is not None:
+      g.add(prior_best)
   '''
   print('---')
   for gm in g.p:
@@ -851,13 +855,21 @@ this message and the READMEs.  Stay Tuned!
     with open(tmpfile,'wb') as f:      
       start_roi = 0
       print('Starting from the beginning.\n')
+      regfile = None
+      prior_best = None
   else:
+    with open(tmpfile,'rb') as f:
+      while True:
+        rf = f.read(512)
+        if len(rf)<512:
+          break
+        prior_best = opl3.rfToV(rf)
+        regfile = rf
     with open(tmpfile,'ab') as f:
       start_roi = (tsize//512)*2
       print('Found working file. Resuming.\n')
 
   num_frames = slen//2
-
   # brute-force loop: -----
   # for every-other spectrum in original spectrogram:
   for roi in range(start_roi,slen,2): 
@@ -882,7 +894,9 @@ this message and the READMEs.  Stay Tuned!
 
     if brute:
       print('@@@ BRUTE')
-      regfile, do_quit = do_brute(frame, num_frames, ospect)
+      if regfile is not None:
+        prior_best = opl3.rfToV(regfile)
+      regfile, do_quit = do_brute(frame, num_frames, ospect, prior_best)
       if do_quit:
         return do_quit
     '''
@@ -924,7 +938,7 @@ this message and the READMEs.  Stay Tuned!
             genome[x] = opl3.randomAtten()
           else:
             genome[x] = random.random()
-        g.add(i, genome)
+        g.add(genome)
       print('Starting permutations.')
       # Do a (slow) genetic annealing process to
       # try to improve the result. 

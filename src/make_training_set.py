@@ -233,8 +233,10 @@ def main():
         rfile.close()
         sfile.close()
         return 
-    x = random.choice(permidxs)
-    if x in lvls:
+
+    x = random.randint(0,len(opl_vec)-1)
+    ename = opl3.vec_elem_names[x]
+    if 'AttnLv' in ename:
       opl_vec[x]= opl3.randomAtten()
     else:
       opl_vec[x]=random.random()
@@ -294,8 +296,11 @@ def main():
       # check to see if we need to switch fuzzing mode
       perms_this_mode += 1      
       if  perms_this_mode % REINIT_PERIOD == 0:
-        opl_vec = opl3.rfToV(opl3.initRegFile())
         perms_this_mode = 0
+        opl_vec = opl3.rfToV(opl3.initRegFile())
+        REINIT_PERIOD = random.randint(1000,10000)
+        print('Clean slate')
+        '''
         do_4op = not do_4op
         if do_4op:
           REINIT_PERIOD = random.randint(10000,50000)
@@ -305,6 +310,7 @@ def main():
         print('  permutables: ',permidxs)
         print('op atten. lvs: ',lvls)      
         print('  chan. freqs: ',freqs)
+        '''
 
 
 
