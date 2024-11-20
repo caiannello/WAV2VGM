@@ -61,9 +61,8 @@ print('''
     Any advice or sample code would be greatly apreciated!
 
     Thanks,
-    c a i a n n e l 
-    l o @ g o o g l
-    e . c o m 
+    c a i a n n e l l o @ 
+    g o o g l e . c o m 
   ''')
 
 # opl emulator and helper functions for AI training and 

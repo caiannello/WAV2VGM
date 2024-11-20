@@ -648,7 +648,7 @@ def autoTweak(ospect, lastfit, lastspect, v):
 # Returns the best OPL3 configuration achieved after either max iterations 
 # reached, or we stopped seeing improvements for a long time,
 # -----------------------------------------------------------------------------
-def improveMatch(frame, num_frames, ospect, g):
+def improveMatch(frame, tot_frames, ospect, g):
   global screen,screen_width,screen_height
   global GENE_MAX_GENERATIONS
   global desperation
@@ -695,7 +695,7 @@ def improveMatch(frame, num_frames, ospect, g):
       tnow = time.time()
       tdelt = tnow-tstart
       tstart = tnow  
-      print(f'Frame:{frame+1}/{num_frames}, Gen.:{gen:3d}, fit:{hfit:8.3f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
+      print(f'Frame:{frame+1}/{tot_frames}, Gen.:{gen:3d}, fit:{hfit:8.3f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
       sys.stdout.flush()
       if hfit < best_fit:
         improved = True
@@ -743,7 +743,7 @@ def improveMatch(frame, num_frames, ospect, g):
 # -----------------------------------------------------------------------------
 # brute force - start with sum of sines, then do GA
 # -----------------------------------------------------------------------------
-def do_brute(frame, num_frames, ospect):
+def do_brute(frame, tot_frames, ospect):
   peaks = getRankedPeaks(ospect, -115.0, 0, True, 5, 5)
   
   # make original estimate by setting the OPL to 
@@ -779,7 +779,7 @@ def do_brute(frame, num_frames, ospect):
   g = gene.gene(1000, ospect)
   for i in range(10):
     g.add(v)
-  return improveMatch(frame, num_frames, ospect, g)
+  return improveMatch(frame, tot_frames, ospect, g)
 # -----------------------------------------------------------------------------
 # WIP EXPERIMENT- 
 # Tries to brute-force a solution using either a (slow) genetic algorithm or a 
@@ -795,6 +795,11 @@ def bruteForce(brute = False, genetic = False, ai = False):
   ww = int(screen_width)
   hh = int(screen_height//4)
   slen = len(origspect.spectrogram)
+
+    # The spectragram has 172.265625 spectra/sec,
+  # so if we do every third spectrum in this brute-force
+  # loop, that'll be a frame rate of 57.421875 Hz.
+  SPECS_PER_FRAME = 3  
 
   try:
     if ai:
@@ -836,9 +841,10 @@ this message and the READMEs.  Stay Tuned!
   except:
     tsize = 0
   # if file full, or empty, or len is not multiple of 512, start over.
-  if (tsize==0) or (tsize%512) or (tsize>=(512*(slen//2))):
+  if (tsize==0) or (tsize%512) or (tsize>=(512*(slen//SPECS_PER_FRAME))):
     with open(tmpfile,'wb') as f:      
       start_roi = 0
+      start_frame = 0
       print('Starting from the beginning.\n')
       regfile = None
       prior_best = None
@@ -851,18 +857,16 @@ this message and the READMEs.  Stay Tuned!
         prior_best = opl3.rfToV(rf)
         regfile = rf
     with open(tmpfile,'ab') as f:
-      start_roi = (tsize//512)*2
+      start_roi = (tsize//512)*SPECS_PER_FRAME
+      start_frame = start_roi // SPECS_PER_FRAME
       print('Found working file. Resuming.\n')
 
-  num_frames = slen//3
-  # brute-force loop: -----
+  tot_frames = slen//SPECS_PER_FRAME
 
-  # The spectragram has 172.265625 spectra/sec,
-  # so if we do every third spectrum in this brute-force
-  # loop, that'll be a frame rate of 57.421875 Hz.
+  # brute-force loop: -----
   tstart = time.time()
   tstepdur = 0
-  for roi in range(start_roi,slen,3): 
+  for roi in range(start_roi,slen,SPECS_PER_FRAME): 
 
     # check if user is a quitter
     for event in pygame.event.get():
@@ -873,12 +877,16 @@ this message and the READMEs.  Stay Tuned!
           return SOFT_QUIT
 
     # show progess
-    pct = roi * 100.0 / slen
-    frame = roi // 2
     tnow = time.time()
     tmins = (tnow - tstart)/60.0
-
-    s = f'Brute Force: frame {frame+1}/{num_frames} - Progress: {pct:6.2f}% - Duration: {tmins:5.1f} mins '
+    frame = roi // SPECS_PER_FRAME
+    pct = frame * 100.0 / tot_frames
+    s = f'Brute Force: frame {frame+1}/{tot_frames} - Progress: {pct:6.2f}% - Duration: {tmins:5.1f} mins '
+    elap_frames=(roi-start_roi) // SPECS_PER_FRAME
+    if elap_frames>0:
+      t_per_frame = (tnow-tstart)/elap_frames
+      trem = ((tot_frames-frame)*t_per_frame)/3600.0
+      s+= f'- Est. Rem. {trem:5.1} hrs '
     s += '-'*(80-len(s))
     print(s)
 
@@ -889,7 +897,7 @@ this message and the READMEs.  Stay Tuned!
       print('@@@ BRUTE')
       regfile = None
       tstepstart = time.time()
-      regfile, do_quit = do_brute(frame, num_frames, ospect)
+      regfile, do_quit = do_brute(frame, tot_frames, ospect)
       if do_quit:
         return do_quit
       tstepdur = (time.time() - tstepstart)/60
@@ -937,7 +945,7 @@ this message and the READMEs.  Stay Tuned!
       print('Starting permutations.')
       # Do a (slow) genetic annealing process to
       # try to improve the result. 
-      regfile, do_quit = improveMatch(frame, num_frames, ospect, g)
+      regfile, do_quit = improveMatch(frame, tot_frames, ospect, g)
 
       if do_quit:
         print('Brute force - quitting!')
@@ -999,14 +1007,14 @@ def loadRegfile():
 
   print('loadRegfile(): Starting...\n')
   infile = open(tmpfile,'rb')
-  num_frames = tsize // 512
+  tot_frames = tsize // 512
   
   prevv = None
 
   frame_vects = []  # gather opl3 register changes per frame
 
   # data input loop
-  for frame in range(num_frames):  # for each frame (opl config) in file
+  for frame in range(tot_frames):  # for each frame (opl config) in file
 
     # check if user is a quitter
     for event in pygame.event.get():
@@ -1029,7 +1037,7 @@ def loadRegfile():
 
     ospect = origspect.spectrogram[frame*2][0:-1]
     fitness,spect = opl3.fitness(ospect, v)
-    print(f'frame: {frame+1}/{num_frames}: {fitness=:8.2f}')
+    print(f'frame: {frame+1}/{tot_frames}: {fitness=:8.2f}')
 
     '''
     # render the latest synth configuration and draw spectrum
