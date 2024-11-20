@@ -15,23 +15,18 @@ class OPL3Model(nn.Module):
             nn.ReLU(),
             nn.Conv1d(in_channels=32, out_channels=64, kernel_size=7, stride=1, padding=3),
             nn.ReLU(),
-            nn.Conv1d(in_channels=64, out_channels=64, kernel_size=9, stride=1, padding=4),
-            nn.ReLU()
         )
-
-        # Pooling for downsampling
-        self.pooling = nn.MaxPool1d(kernel_size=4, stride=4)
 
         # Attention for global feature extraction
         self.attention = nn.MultiheadAttention(embed_dim=64, num_heads=4, batch_first=True)
 
         # Fully connected layers for synthesizer configuration output
         self.fc_layers = nn.Sequential(
-            nn.Linear(64 * (2048 // 4), 1024),  # Adjust input size based on pooling
+            nn.Linear(64 * 2048, 1024),  # Adjust input size based on pooling
             nn.ReLU(),
-            nn.Linear(1024, 512),
+            nn.Linear(1024, 1024),
             nn.ReLU(),
-            nn.Linear(512, 222)  # Final output for synthesizer configuration
+            nn.Linear(1024, 222)  # Final output for synthesizer configuration
         )
 
     def forward(self, x):
@@ -40,9 +35,6 @@ class OPL3Model(nn.Module):
 
         # Convolutional layers
         x = self.conv_layers(x)  # Shape: [batch_size, 64, 2048]
-
-        # Pooling
-        x = self.pooling(x)  # Shape: [batch_size, 64, 2048 // 4]
 
         # Attention
         x = x.permute(0, 2, 1)  # Shape: [batch_size, 2048 // 4, 64]

@@ -324,7 +324,7 @@ class OPL3:
       x = self.vec_elem_names.index(name) # initially, lookup by name,
       self.vec_reloc[rf_idx] = x          # and cache result for next time speedup
     v[x] = val
-    return v
+    #return v
 
   # Used by vToRf to get a vec element as float
   def vecToRfGetNamedFloat(self, v, rf_idx, name):
@@ -344,14 +344,14 @@ class OPL3:
   def setNamedVecElemFloat(self, v, name,f):
     x = self.vec_elem_names.index(name)    
     v[x] = f
-    return v
+    #return v
 
   # set named vector element from int
   def setNamedVecElemInt(self, v, name,intval):
     x = self.vec_elem_names.index(name)
     bw = self.vec_elem_bits[x]
     v[x] = self.vecIntToFlt(intval,bw)
-    return v
+    #return v
 
   # Convert a 512-byte OPL3 register file into a 
   # float32[222] synth configuration vector for 
@@ -386,7 +386,7 @@ class OPL3:
       else:
         val = 0.0
       name = names[j]
-      v = self.rfToVecAddNamedElem(v,j,name,val)
+      self.rfToVecAddNamedElem(v,j,name,val)
       mask>>=1
       j+=1
     #
@@ -418,10 +418,10 @@ class OPL3:
       fbcnt = (c>>1)&7
       fnum = flow|(fhi<<8)
       freq = self.fNumBlkToFreq(fnum, block)
-      v = self.rfToVecAddNamedElem(v,i*4+6,'KeyOn.c'+str(i) , float(keyon))
-      v = self.rfToVecAddNamedElem(v,i*4+7,'Freq.c'+str(i)  , freq / self.OPL3_MAX_FREQ)
-      v = self.rfToVecAddNamedElem(v,i*4+8,'FbCnt.c'+str(i) , self.vecIntToFlt(fbcnt,3))
-      v = self.rfToVecAddNamedElem(v,i*4+9,'SnTyp.c'+str(i) , float(sntype))
+      self.rfToVecAddNamedElem(v,i*4+6,'KeyOn.c'+str(i) , float(keyon))
+      self.rfToVecAddNamedElem(v,i*4+7,'Freq.c'+str(i)  , freq / self.OPL3_MAX_FREQ)
+      self.rfToVecAddNamedElem(v,i*4+8,'FbCnt.c'+str(i) , self.vecIntToFlt(fbcnt,3))
+      self.rfToVecAddNamedElem(v,i*4+9,'SnTyp.c'+str(i) , float(sntype))
     #
     # Operator related things come last:
     #
@@ -441,10 +441,10 @@ class OPL3:
       ws = rf[0xE0|o]&7
       attnlv = f&63
       ksatnlv = (f>>6)&3
-      v = self.rfToVecAddNamedElem(v,i*4+(4*18)+10,'FMul.o'+str(i),self.vecIntToFlt(fmul,4))
-      v = self.rfToVecAddNamedElem(v,i*4+(4*18)+11,'KSAtnLv.o'+str(i),self.vecIntToFlt(ksatnlv,2))
-      v = self.rfToVecAddNamedElem(v,i*4+(4*18)+12,'AttnLv.o'+str(i),self.vecIntToFlt(attnlv,6))
-      v = self.rfToVecAddNamedElem(v,i*4+(4*18)+13,'WavSel.o'+str(i),self.vecIntToFlt(ws,3))
+      self.rfToVecAddNamedElem(v,i*4+(4*18)+10,'FMul.o'+str(i),self.vecIntToFlt(fmul,4))
+      self.rfToVecAddNamedElem(v,i*4+(4*18)+11,'KSAtnLv.o'+str(i),self.vecIntToFlt(ksatnlv,2))
+      self.rfToVecAddNamedElem(v,i*4+(4*18)+12,'AttnLv.o'+str(i),self.vecIntToFlt(attnlv,6))
+      self.rfToVecAddNamedElem(v,i*4+(4*18)+13,'WavSel.o'+str(i),self.vecIntToFlt(ws,3))
 
     # We have our map of vector names to element indices.
     # Hopefully it speeds things up.
