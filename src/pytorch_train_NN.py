@@ -41,12 +41,29 @@ epochs = 50
 early_stopping_patience = 5
 
 print('''
-  TODO: Add code to sanity check training set before starting.
-  In particular, make sure inputs and outputs stay in sync 
-  throughout the file, since the generator can be stopped 
-  and restarted. This could involve re-rendering some of synth
-  configs including the last one, to make sure the spectra still
-  match.
+    Dear AI gurus of the world, please help!
+
+    I can make a ton of training data of what the frequency spectrum looks 
+    like for any given OPL3 register configuration. I'm trying to teach the 
+    model to take a spectrum as input and infer an OPL3 configuration, but 
+    I'm having a ton of trouble!
+
+    I think my main issue at this point is that my loss function it just 
+    a mean-squared error of the predicted OPL config vs the training 
+    config, but all the channels and operands in the OPL3 chip are fairly 
+    interchangeable, such that two completely different-looking 
+    configurations can product exactly the same sound.
+
+    I tried to put OPL3 emulation into the loss function, but besides that
+    being a huge slowdown, I dont know how to implement a gradient func
+    of that for backpropagation.
+
+    Any advice or sample code would be greatly apreciated!
+
+    Thanks,
+    c a i a n n e l 
+    l o @ g o o g l
+    e . c o m 
   ''')
 
 # opl emulator and helper functions for AI training and 
