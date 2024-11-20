@@ -56,11 +56,15 @@ class OPL3:
     0x100, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x108
   ]
 
-  # all permutable opl3 fields, named and sorted into related objects
+  # for speeding up rfToV and vToRf
+  vec_reloc = {
+
+  }
+  got_reloc = False
+
+  # all permutable opl3 fields, named and sorted into related objects,
   # to help genetic crossover and maybe the AI.
   '''
-  def makeVecElemNames(self):
-    shop_list = [
       '0f3',   'c0',    'o0',    'o3',    'c3',    'o6',    'o9',
       '1f4',   'c1',    'o1',    'o4',    'c4',    'o7',    'o10',
       '2f5',   'c2',    'o2',    'o5',    'c5',    'o8',    'o11',
@@ -73,14 +77,8 @@ class OPL3:
       'c15',   'o30',   'o33',
       'c16',   'o31',   'o34',
       'c17',   'o32',   'o35',
-    ]
   '''
-  # for speeding up rfToV and vToRf
-  vec_reloc = {
-
-  }
-  got_reloc = False
-
+  # names of all 222 OPL3 configuration-vector elements:
   vec_elem_names = [
     '0f3', 'KeyOn.c0', 'Freq.c0', 'FbCnt.c0', 'SnTyp.c0', 'FMul.o0', 'KSAtnLv.o0', 'AttnLv.o0', 
     'WavSel.o0', 'FMul.o3', 'KSAtnLv.o3', 'AttnLv.o3', 'WavSel.o3', 'KeyOn.c3', 'Freq.c3', 
@@ -114,6 +112,7 @@ class OPL3:
     'FMul.o34', 'KSAtnLv.o34', 'AttnLv.o34', 'WavSel.o34', 'KeyOn.c17', 'Freq.c17', 'FbCnt.c17', 
     'SnTyp.c17', 'FMul.o32', 'KSAtnLv.o32', 'AttnLv.o32', 'WavSel.o32', 'FMul.o35', 'KSAtnLv.o35', 
     'AttnLv.o35', 'WavSel.o35']
+  # width in bits for each of the above as found in the OPL3 registers
   vec_elem_bits = [
     1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 
     4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 
@@ -123,9 +122,9 @@ class OPL3:
     13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 
     6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3, 1, 
     13, 3, 1, 4, 2, 6, 3, 4, 2, 6, 3]
+
   # which two operators are assigned to each channel
   # in 2-op mode.
-
   _2op_chans = {
      0:[ 0, 3], 1 :[ 1, 4],  2:[ 2, 5],  3:[ 6, 9],
      4:[ 7,10], 5 :[ 8,11],  6:[12,15],  7:[13,16],
@@ -133,10 +132,10 @@ class OPL3:
     12:[24,27], 13:[25,28], 14:[26,29], 15:[30,33],
     16:[31,34], 17:[32,35] }
 
-  # which channels can be paired into a single 
-  # 4-op channel
+  # which channels (A,B) can be paired into a single 
+  # 4-op channel A. (Chan B is then unused.)
   _4op_chan_combos = [
-    (0,3),    # Makes 4-op channel 0, channel 3 goes away
+    (0,3),
     (1,4),
     (2,5),
     (9,12),
@@ -147,9 +146,7 @@ class OPL3:
   # things used to convert between frequency in Hz and 
   # the OPL3 equivalent: (uint10 fnum, uint3 block)
   max_freq_per_block = [48.503,97.006,194.013,388.026,776.053,1552.107,3104.215,6208.431]
-  fsamp = 14318181.0/288.0
-
-  make_labels = True  # True until we have named all vector elements
+  fsamp = 14318181.0/288.0  # constant Fs - used in the calculation
 
   OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to an operator
 
@@ -214,9 +211,40 @@ class OPL3:
     #self._opl.writeReg(register | (bank << 2), value)
     self._opl.writeReg(bank<<8|register, value)
 
+  def isValidReg(self, a):
+    if a == 0x104:
+      return True
+    if a == 0x105:
+      return True
+    if a == 0x0BD:
+      return True
+    al = a & 0xff
+    if al>=0x20 and al <=0x35:
+      return True
+    if al>=0x40 and al <=0x55:
+      return True
+    if al>=0x60 and al <=0x75:
+      return True
+    if al>=0x80 and al <=0x95:      
+      return True
+    if al>=0xE0 and al <=0xF5:
+      return True
+
+    if al>=0xA0 and al <=0xA8:
+      return True
+    if al>=0xB0 and al <=0xB8:
+      return True
+    if al>=0xC0 and al <=0xC8:
+      return True
+
+    return False
+
   def _writeRegFile(self, rf) -> None:
+    # todo, only call writereg for known valid 
+    # register addresses.
     for i,v in enumerate(rf):
-      self._opl.writeReg( i, v)
+      if self.isValidReg(i):
+        self._opl.writeReg( i, v)
 
 
   # the "AttnLvl.oXX" field for an operator,
@@ -600,7 +628,7 @@ class OPL3:
         b,r = key
         v = cfg[key]
         self._writeReg(b,r,v)
-    elif isinstance(cfg,np.ndarray):  # config vector from pytoerch
+    elif isinstance(cfg,np.ndarray):  # config vector from pytorch
       try:
         rf = self.vToRf(cfg)
       except Exception as e:
@@ -618,12 +646,17 @@ class OPL3:
       self._writeRegFile(cfg)   # bytes[512] opl3 register file
     self._output = bytes()
     # render 4096 samples
-    self._render_samples(4096)  
+    self._render_samples(4096+256)  
     _, wave = self.stereoBytesToNumpy(self._output)
     # if not flat-line, generate spectrogram
     if wave.sum():
-      spec = sp.spect(wav_filename = None, sample_rate=44100,samples=wave,nperseg=4096, quiet=True, clip = False)    
-      # we want only the first spectrum of spectogram
+      spec = sp.spect(wav_filename = None, sample_rate=44100,samples=wave[-4096:],nperseg=4096, quiet=True, clip = False)    
+      wmin = wave.min()
+      if wmin<self.wave_low:
+        self.wave_low = wmin
+      wmax = wave.max()
+      if wmax>self.wave_high:
+        self.wave_high = wmax
       spec = spec.spectrogram[0][0:-1]
       for b in spec:
         if b < self.bin_low:

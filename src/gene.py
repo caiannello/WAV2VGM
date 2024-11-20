@@ -5,8 +5,9 @@
 ###############################################################################
 import random
 import datetime
-from copy import deepcopy
+from   copy import deepcopy
 import math
+import bisect
 try:
   from .OPL3 import OPL3
 except:
@@ -16,25 +17,19 @@ opl3 = OPL3()
 
 random.seed(datetime.datetime.now().timestamp())
 
-# a member of the gene pool
-class gmemb:
-  fit = 9999999
-  genome = None
-  spect = None
-  def __init__(self,fit,spect,genome):
-    self.fit = fit
-    self.spect = spect
-    self.genome = genome
-  def __str__(self):
-    return f'Im a {self.fit=}!'
-
 # the gene pool
 class gene:
+  # spectrum we hope to achieve
   ideal = None
+  # the population
   p = []
+  # upper limit of pop size
   p_max = 500
-  fbest = 999999999
-  fworst = -999999999
+
+  # for debug: trying to diagnose a problem using these
+  best_fit = None
+  best_genome = None
+  best_spect = None
 
   # The chromosomes below of length 25 might actually be 
   # two chromosomes of lengths 13 and 12, if the first 
@@ -45,7 +40,7 @@ class gene:
   # and the short ones
   short_chromos = []
 
-  def __init__(self, p_max=500, ideal=None):
+  def __init__(self, p_max, ideal):
     self.p_max = p_max  
     self.ideal = deepcopy(ideal)
     ofs = 0
@@ -57,11 +52,16 @@ class gene:
       ofs+=l
 
   def add(self, genome):  # fitness: lower is better
-    ng = deepcopy(genome)
-    fit, spect = opl3.fitness(self.ideal, ng)
-    gm = gmemb(fit,spect,ng)
-    self.p.append(gm)
-    self.re_sort()
+    gn = deepcopy(genome)
+    fit, spect = opl3.fitness(self.ideal, gn)
+    memb = (genome, deepcopy(spect), fit)
+    bisect.insort_left(self.p, memb, key=lambda r: r[2])
+    ct = len(self.p)
+    if ct>self.p_max:
+      self.p = self.p[0:self.p_max]
+    self.best_fit = deepcopy(self.p[0][2])
+    self.best_genome = deepcopy(self.p[0][0])
+    self.best_spect = deepcopy(self.p[0][1])
 
   # replace the worst half (or more) with new offspring
   # though crossover, etc, with occasional mutaations.
@@ -69,7 +69,7 @@ class gene:
 
   def generate(self, mutatefcn, desperation):
     splitpoint = len(self.p)//2
-    while self.p[splitpoint].spect is None:
+    while self.p[splitpoint][1] is None:
       splitpoint-=1
       if splitpoint<0:
         print('WTF EXTINCTION!')
@@ -78,9 +78,9 @@ class gene:
     mutants = 0
     for i in range(splitpoint, self.p_max):
       a = random.randint(0,splitpoint-1)  # parents
-      ga = self.p[a].genome
+      ga = self.p[a][0]
       b = random.randint(0,splitpoint-1)
-      gb = self.p[b].genome
+      gb = self.p[b][0]
       if random.random()<=0.9:                # 90% of offspring from single-point crossover
         cp = random.randint(0,len(self.chromosome_lens)-1)  # split at chromosomal boundary
         # figure out vector elem where that happens.
@@ -96,7 +96,7 @@ class gene:
             break
           vidx += cl
           j+=1
-        genome = ga[0:vidx] + gb[vidx:]
+        genome = deepcopy(ga[0:vidx]) + deepcopy(gb[vidx:])
       else:                                   # 10% chance of chromosomal shuffle
         genome = []  
         j = 0
@@ -109,22 +109,22 @@ class gene:
             if parent:
               cfg = gb[j]
               if cfg>=0.5:
-                genome += gb[j:j+cl]
+                genome += deepcopy(gb[j:j+cl])
               else:
-                genome += gb[j:j+13]
-                genome += ga[j+13:j+13+12]
+                genome += deepcopy(gb[j:j+13])
+                genome += deepcopy(ga[j+13:j+13+12])
             else:
               cfg = ga[j]
               if cfg>=0.5:
-                genome += ga[j:j+cl]
+                genome += deepcopy(ga[j:j+cl])
               else:
-                genome += ga[j:j+13]
-                genome += gb[j+13:j+13+12]
+                genome += deepcopy(ga[j:j+13])
+                genome += deepcopy(gb[j+13:j+13+12])
           else:
             if parent:
-              genome += gb[j:j+cl]
+              genome += deepcopy(gb[j:j+cl])
             else:
-              genome += ga[j:j+cl]
+              genome += deepcopy(ga[j:j+cl])
           j+=cl
 
       # Lets also sometimes swap around any chromosomes 
@@ -156,10 +156,7 @@ class gene:
         mutants+=1
         genome = mutatefcn(genome, desperation)      
       
-      # Add the child to population.
-      fit, spect = opl3.fitness(self.ideal, genome)
-      gm = gmemb(fit,spect,deepcopy(genome))
-      self.p.append(gm)
+      self.add(genome)
 
     # if desperate, do per-chromosome piecewise fitness 
     # and impose upon the worst ones a higher chance of
@@ -167,7 +164,7 @@ class gene:
     nukes=0
     jostles = 0
     if desperation>=5:
-      cgene = deepcopy(self.p[0].genome)
+      cgene = deepcopy(self.p[0][0])
       j = 0
       k = 0
       pfits = []
@@ -197,20 +194,8 @@ class gene:
             elif velem>1.0:
               velem = 1.0
             cgene[pos+j] = velem
-      #print(f"{pfits=}")
-      cfit, cspect = opl3.fitness(self.ideal, cgene)
-      self.p.append(gmemb(cfit,cspect,cgene))
-
-    self.re_sort()
+      self.add(cgene)
     print(f'mutants:{mutants:3d}, nukes:{nukes:2d}, jostles:{jostles:2d}',end='')
-
-  def re_sort(self):
-    ct = len(self.p)
-    self.p.sort(key=lambda m: m.fit)
-    if ct>self.p_max:
-      self.p = self.p[0:self.p_max]
-    self.fbest = self.p[0].fit 
-    self.fworst = self.p[-1].fit 
 ###############################################################################
 # EOF
 ###############################################################################

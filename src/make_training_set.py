@@ -188,6 +188,7 @@ def main():
   vl = len(opl_vec)
 
   do_4op = False
+  out_mode = 0
   opl_vec, permidxs, lvls, freqs = setComplexity(opl_vec, do_4op)
   print('  permutables: ',permidxs)
   print('op atten. lvs: ',lvls)      
@@ -233,18 +234,36 @@ def main():
         rfile.close()
         sfile.close()
         return 
-
-    x = random.randint(0,len(opl_vec)-1)
-    ename = opl3.vec_elem_names[x]
-    if 'AttnLv' in ename:
-      opl_vec[x]= opl3.randomAtten()
-    else:
-      opl_vec[x]=random.random()
-
-    rf = opl3.vToRf(opl_vec)
+    '''
+    if random.random()<0.98:
+      x = random.choice(freqs)
+      o = opl_vec[x]
+      o += freq_sweep_direction * 0.0005
+      if o>1.0:
+        o=1.0
+        freq_sweep_direction = -1
+      elif o<0.0:
+        o=0.0
+        freq_sweep_direction = 1
+      opl_vec[x] = o
+    else:  
+    '''
+    if out_mode == 2:             # kitchen sink mode
+      x = random.randint(0,len(opl_vec)-1)
+      ename = opl3.vec_elem_names[x]
+      if 'AttnLv' in ename:
+        opl_vec[x]= opl3.randomAtten()
+      else:
+        opl_vec[x]=random.random()
+    else:                           # 1-channel modes
+      x = random.choice(permidxs)
+      if x in lvls:
+        opl_vec[x]= opl3.randomAtten()
+      else:
+        opl_vec[x]=random.random()
 
     # render a 4096-point waveform and its spectrum
-    waveform, tspect = opl3.renderOPLFrame(rf)
+    waveform, tspect = opl3.renderOPLFrame(opl_vec)
     
     if tspect is not None:    # If audiable, do file output
       sbin = b''
@@ -261,7 +280,7 @@ def main():
           b=255
         b = 255-b
         sbin+=struct.pack('B',b)    
-      sfile.write(sbin)     # write spect
+      sfile.write(sbin)     # write spect  (would it help to add the waveform too?)
       fsz += len(sbin)      # update file size
       iters+=1              # and record count
 
@@ -298,22 +317,24 @@ def main():
       if  perms_this_mode % REINIT_PERIOD == 0:
         perms_this_mode = 0
         opl_vec = opl3.rfToV(opl3.initRegFile())
-        REINIT_PERIOD = random.randint(1000,10000)
-        print('Clean slate')
-        '''
-        do_4op = not do_4op
-        if do_4op:
-          REINIT_PERIOD = random.randint(10000,50000)
-        else:
-          REINIT_PERIOD = random.randint(10000,50000)
-        opl_vec, permidxs, lvls, freqs = setComplexity(opl_vec, do_4op)
-        print('  permutables: ',permidxs)
-        print('op atten. lvs: ',lvls)      
-        print('  chan. freqs: ',freqs)
-        '''
-
-
-
+        REINIT_PERIOD = random.randint(10000,50000)
+        out_mode +=1
+        if out_mode==3:
+          out_mode = 0
+        if out_mode==0:
+          do_4op = False
+          opl_vec, permidxs, lvls, freqs = setComplexity(opl_vec, do_4op)
+          print('  permutables: ',permidxs)
+          print('op atten. lvs: ',lvls)      
+          print('  chan. freqs: ',freqs)                    
+        elif out_mode==1:
+          do_4op = True
+          opl_vec, permidxs, lvls, freqs = setComplexity(opl_vec, do_4op)
+          print('  permutables: ',permidxs)
+          print('op atten. lvs: ',lvls)      
+          print('  chan. freqs: ',freqs)  
+        elif out_mode == 2:
+          print('  permutables: ',"ALL!!")
 ###############################################################################
 # ENTRYPOINT
 ###############################################################################

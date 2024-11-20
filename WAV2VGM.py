@@ -574,10 +574,10 @@ def mutatefcn(genome, desperation):
   for c in range(0,numchanges):
     x = random.randint(0,len(genome)-1)
     if random.random()<=(0.1+coup):              # normally a 10% chance to fully re-randomize the element,
-      if x in lvls:                              # but the chanc3e can go as high as 90% when desperation is high
-        genome[x] = opl3.randomAtten()
-      else:
-        genome[x] = random.random()
+      #if x in lvls:                              # but the chanc3e can go as high as 90% when desperation is high
+      #  genome[x] = opl3.randomAtten()
+      #else:
+      genome[x] = random.random()
     else:                                 # 90% chance for an incremental bump.
       if x in freqs:
         f = genome[x]
@@ -672,6 +672,7 @@ def improveMatch(frame, num_frames, ospect, g):
   best_fit = None
 
   for gen in range(0,GENE_MAX_GENERATIONS):    
+
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  
         return None, HARD_QUIT
@@ -679,16 +680,13 @@ def improveMatch(frame, num_frames, ospect, g):
         if event.key == pygame.K_ESCAPE:
           return None, SOFT_QUIT
         elif event.key == pygame.K_RETURN:
-          regfile = opl3.vToRf(best_vec)        
+          regfile = opl3.vToRf(g.best_genome)
           return regfile, NO_QUIT
     
-    g.re_sort()
-    hero = g.p[0]
-    hgenome = hero.genome
-    hfit = hero.fit
-    hspect = hero.spect
-    improved = False 
-    
+    hfit = float(g.best_fit)
+    hspect = g.best_spect
+    hgenome = g.best_genome
+    improved = False
     if hspect is not None:
       if initfit is None:
         initfit = hfit
@@ -697,15 +695,15 @@ def improveMatch(frame, num_frames, ospect, g):
       tnow = time.time()
       tdelt = tnow-tstart
       tstart = tnow  
-      print(f'Frame:{frame}/{num_frames}, Gen.:{gen:3d}, fit:{hfit:8.3f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
+      print(f'Frame:{frame+1}/{num_frames}, Gen.:{gen:3d}, fit:{hfit:8.3f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
       sys.stdout.flush()
       if hfit < best_fit:
         improved = True
         best_fit = hfit
         desperation = 0
       # show current best spectrum
-      best_spect = deepcopy(hspect)
-      best_vec = deepcopy(hgenome)    
+      best_spect = hspect
+      best_vec = hgenome
       pygame.draw.rect(screen,(0,0,0),(0,yofs,ww,hh))  
       plotTestSpect(ospect,-115.0,0,gcolor=(255,255,255),yofs=yofs)
       plotTestSpect(hspect,-115.0,0,gcolor=(255,255,0),yofs=yofs)
@@ -730,22 +728,22 @@ def improveMatch(frame, num_frames, ospect, g):
           break
       else:      
         g.add(newv)  
-        g.re_sort()  
     g.generate(mutatefcn, desperation)
     if tweaks != -1:
       print(f', tweaks: {tweaks}')
     else:
       print()
 
-  fitness, tspect = opl3.fitness(ospect, best_vec)
-  print(f'improveMatch(): Best fit was {best_fit}.  verification {fitness}')
-  regfile = opl3.vToRf(best_vec)
+  fitness, tspect = opl3.fitness(ospect, g.best_genome)
+  print(f'improveMatch(): Best fit was {g.best_fit}.  verification {fitness}')
+
+  regfile = opl3.vToRf(g.best_genome)        
   return regfile, NO_QUIT
 
 # -----------------------------------------------------------------------------
 # brute force - start with sum of sines, then do GA
 # -----------------------------------------------------------------------------
-def do_brute(frame, num_frames, ospect, prior_best):
+def do_brute(frame, num_frames, ospect):
   peaks = getRankedPeaks(ospect, -115.0, 0, True, 5, 5)
   
   # make original estimate by setting the OPL to 
@@ -761,6 +759,7 @@ def do_brute(frame, num_frames, ospect, prior_best):
     vfreq = pfreq/OPL3_MAX_FREQ
     vamp = pheight/-48  # -48dBFS...0 dBFS : float 1.0...0.0
     vvals.append([float(vfreq),float(vamp)])  
+  
   ch = 0
   v = opl3.rfToV(opl3.initRegFile())
   idxs,keyons,lvls,freqs = opl3.vecGetPermutableIndxs(v,inc_keyons=True)      
@@ -776,25 +775,11 @@ def do_brute(frame, num_frames, ospect, prior_best):
     ch+=1
     if ch>=18:
       break
-  #do_quit = NO_QUIT
-  #regfile  = opl3.vToRf(v)
-  # improve on original estimate with GA
-  # todo: should include previous frame's 
-  # best config in the genepool!
+
   g = gene.gene(1000, ospect)
   for i in range(10):
     g.add(v)
-    if prior_best is not None:
-      g.add(prior_best)
-  '''
-  print('---')
-  for gm in g.p:
-    print(gm)
-  print('^^^')
-  '''
-  regfile, do_quit = improveMatch(frame, num_frames, ospect, g)
-
-  return regfile, do_quit
+  return improveMatch(frame, num_frames, ospect, g)
 # -----------------------------------------------------------------------------
 # WIP EXPERIMENT- 
 # Tries to brute-force a solution using either a (slow) genetic algorithm or a 
@@ -869,10 +854,15 @@ this message and the READMEs.  Stay Tuned!
       start_roi = (tsize//512)*2
       print('Found working file. Resuming.\n')
 
-  num_frames = slen//2
+  num_frames = slen//3
   # brute-force loop: -----
-  # for every-other spectrum in original spectrogram:
-  for roi in range(start_roi,slen,2): 
+
+  # The spectragram has 172.265625 spectra/sec,
+  # so if we do every third spectrum in this brute-force
+  # loop, that'll be a frame rate of 57.421875 Hz.
+  tstart = time.time()
+  tstepdur = 0
+  for roi in range(start_roi,slen,3): 
 
     # check if user is a quitter
     for event in pygame.event.get():
@@ -885,7 +875,10 @@ this message and the READMEs.  Stay Tuned!
     # show progess
     pct = roi * 100.0 / slen
     frame = roi // 2
-    s = f'Brute Force: frame {frame}/{num_frames} - Progress: {pct:6.2f}% '
+    tnow = time.time()
+    tmins = (tnow - tstart)/60.0
+
+    s = f'Brute Force: frame {frame+1}/{num_frames} - Progress: {pct:6.2f}% - Duration: {tmins:5.1f} mins '
     s += '-'*(80-len(s))
     print(s)
 
@@ -894,12 +887,14 @@ this message and the READMEs.  Stay Tuned!
 
     if brute:
       print('@@@ BRUTE')
-      if regfile is not None:
-        prior_best = opl3.rfToV(regfile)
-      regfile, do_quit = do_brute(frame, num_frames, ospect, prior_best)
+      regfile = None
+      tstepstart = time.time()
+      regfile, do_quit = do_brute(frame, num_frames, ospect)
       if do_quit:
         return do_quit
-    '''
+      tstepdur = (time.time() - tstepstart)/60
+      print(f'Brute improvement duration: {tstepdur:8.1f} mins')
+
     # NEURAL NETWORK FUN ------------------
     if ai:          
       print('@@@ AI')
@@ -950,7 +945,6 @@ this message and the READMEs.  Stay Tuned!
           drawSpect(origspect,0,0,screen_width,screen_height)
         return do_quit
     # -------------------------------------
-    '''
 
     # give register cfg to opl3 emulator and render a spectrum
     wave, tspect = opl3.renderOPLFrame(regfile)
@@ -964,7 +958,7 @@ this message and the READMEs.  Stay Tuned!
     # for later conversion to VGM. (TODO!!)
     if regfile is not None:
       v = opl3.rfToV(regfile)
-      fitness, spect = opl3.fitness(ospect, v)
+      fitness, spect = opl3.fitness(ospect, v)      
       print(f'output fitness: {fitness=:8.2f}')
       with open(tmpfile,'ab') as f:
         f.write(regfile)
@@ -983,6 +977,10 @@ def loadRegfile():
   global lvls, freqs
   ww = int(screen_width)
   hh = int(screen_height//4)
+
+  # time delta per spectrogram (secs): 0.00580498866213152
+  # the regfile does every third spectrum, so it has 
+  # a framerate of 57.421875 synth configs per second
 
   print('\n##############################################################################\n')
 

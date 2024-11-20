@@ -69,9 +69,16 @@ val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
 model = OPL3Model().to(device)
 
-
 # Loss and optimizer
+
+# need a loss function that taskes into account that
+# OPL3 channels/operators are interchangable!!
+
+# Any AI GURU willing to help?? I'm lost!!!
+
 criterion = nn.MSELoss()
+
+
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # ------------------------------------------------------------------------
