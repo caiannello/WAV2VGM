@@ -15,66 +15,38 @@ except:
 
 random.seed(datetime.datetime.now().timestamp())
 
-# the gene pool
+opl3 = OPL3()
 class gene:
-  # The chromosomes below of length 25 might actually be 
-  # two chromosomes of lengths 13 and 12, if the first 
-  # element of that chromosome is zero.
   chromosome_lens = [25,25,25,12,12,12,25,25,25,12,12,12]  
-  # indexes in the above array of the long ones
-  long_chromos = []
-  # and the short ones
-  short_chromos = []
-
-  def __init__(self, o3, p_max, ideal, permutables):
-    self.o3 = o3
-    self.p_max = p_max  
-    self.ideal = deepcopy(ideal)
+  def __init__(self, p_max, ideal, permutables, mutatefcn):
     self.p = []
-    self.best_fit = None
-    self.best_genome = None
-    self.best_spect = None
-    self.long_chromos = []
-    self.short_chromos = []
-    self.permutables = permutables
-    ofs = 0
-    for i,l in enumerate(self.chromosome_lens):
-      if l==25:
-        self.long_chromos.append(ofs)
-      else:
-        self.short_chromos.append(ofs)
-      ofs+=l
-
-  def add(self, genome):  # fitness: lower is better
+    self.p_max = p_max
+    self.ideal = deepcopy(ideal)
+    self.permutables = deepcopy(permutables)
+    self.mutatefcn = mutatefcn
+  def add(self, genome):
+    global opl3
     gn = deepcopy(genome)
-    fit, spect = self.o3.fitness(self.ideal, gn)
-    memb = (gn, deepcopy(spect), fit)
-    bisect.insort_left(self.p, memb, key=lambda r: r[2])
+    fit, spect = opl3.fitness(self.ideal, gn)
+    memb = {'genome':gn, 'spect':deepcopy(spect), 'fit':fit}
+    bisect.insort_left(self.p, memb, key=lambda m: m['fit'])
     ct = len(self.p)
     if ct>self.p_max:
       self.p = self.p[0:self.p_max]
-    self.best_genome = deepcopy(self.p[0][0])
-    self.best_spect = deepcopy(self.p[0][1])
-    self.best_fit = deepcopy(self.p[0][2])
-
-  # replace the worst half (or more) with new offspring
-  # though crossover, etc, with occasional mutaations.
-  # Then, re-sort population by fitness.
-
-  def generate(self, mutatefcn, desperation):
+  def generate(self, desperation):
     splitpoint = len(self.p)//2
-    while self.p[splitpoint][1] is None:      
+    while self.p[splitpoint]['spect'] is None:      
       splitpoint-=1
       if splitpoint<0:
         print('WTF EXTINCTION!')
         exit()
-    self.p = self.p[0:splitpoint]
+    self.p = deepcopy(self.p[0:splitpoint])
     mutants = 0
     for i in range(splitpoint, self.p_max):
       a = random.randint(0,splitpoint-1)  # parents
-      ga = deepcopy(self.p[a][0])
+      ga = deepcopy(self.p[a]['genome'])
       b = random.randint(0,splitpoint-1)
-      gb = deepcopy(self.p[b][0])
+      gb = deepcopy(self.p[b]['genome'])
       if random.random()<=0.9:                # 90% of offspring from single-point crossover
         cp = random.randint(0,len(self.chromosome_lens)-1)  # split at chromosomal boundary
         # figure out vector elem where that happens.
@@ -90,9 +62,9 @@ class gene:
             break
           vidx += cl
           j+=1
-        genome = ga[0:vidx] + gb[vidx:]
+        gchild = ga[0:vidx] + gb[vidx:]
       else:                                   # 10% chance of chromosomal shuffle
-        genome = []  
+        gchild = []  
         j = 0
         for cl in self.chromosome_lens:
           parent = random.randint(0,1)
@@ -103,22 +75,22 @@ class gene:
             if parent:
               cfg = gb[j]
               if cfg>=0.5:
-                genome += gb[j:j+cl]
+                gchild += gb[j:j+cl]
               else:
-                genome += gb[j:j+13]
-                genome += ga[j+13:j+13+12]
+                gchild += gb[j:j+13]
+                gchild += ga[j+13:j+13+12]
             else:
               cfg = ga[j]
               if cfg>=0.5:
-                genome += ga[j:j+cl]
+                gchild += ga[j:j+cl]
               else:
-                genome += ga[j:j+13]
-                genome += gb[j+13:j+13+12]
+                gchild += ga[j:j+13]
+                gchild += gb[j+13:j+13+12]
           else:
             if parent:
-              genome += gb[j:j+cl]
+              gchild += gb[j:j+cl]
             else:
-              genome += ga[j:j+cl]
+              gchild += ga[j:j+cl]
           j+=cl
 
       # possibly impose some mutations
@@ -127,48 +99,12 @@ class gene:
         mutagen = 4
       if random.randint(0,11) <= mutagen:
         mutants+=1
-        genome = mutatefcn(self.o3, genome, desperation, self.permutables)      
-      
-      self.add(genome)
+        gchild = self.mutatefcn(gchild, desperation, self.permutables)      
 
-    # if desperate, do per-chromosome piecewise fitness 
-    # and impose upon the worst ones a higher chance of
-    # mutation.
-    nukes=0
-    jostles = 0
-    if desperation>=5:
-      cgene = deepcopy(self.p[0][0])
-      j = 0
-      k = 0
-      pfits = []
-      fsum = 0
-      for cl in self.chromosome_lens:
-        chromo = cgene[j:j+cl]
-        pgenome = [0.00]*j + chromo + [0.00]*(len(cgene) - (j+cl))
-        pfit, _ = self.o3.fitness(self.ideal, pgenome)
-        fsum+=pfit
-        pfits.append((k,j,cl,pfit))
-        j+=cl
-        k+=1
-      pfits.sort(key=lambda m: m[3])
-      fsum/=k
-      for f in pfits:
-        idx,pos,cl,fit = f
-        if math.isinf(fit): # nuke chromosomes that arent helping at all
-          cgene[pos:pos+cl] = [ random.random() for q in range(cl) ]
-          nukes+=1
-        elif fit>fsum: # if worse than average, jostle vals
-          jostles += 1
-          for j,velem in enumerate(cgene[pos:pos+cl]):
-            f = random.random()+0.5
-            velem *= f
-            if velem<0.0:
-              velem = 0
-            elif velem>1.0:
-              velem = 1.0
-            cgene[pos+j] = velem
-      self.add(cgene)
-    print(f'mutants:{mutants:3d}, nukes:{nukes:2d}, jostles:{jostles:2d}',end='')
+      # add child to population
+      self.add(gchild)
+
+    print(f'mutants:{mutants:3d}',end='')      
 ###############################################################################
 # EOF
 ###############################################################################
