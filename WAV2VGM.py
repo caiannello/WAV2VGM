@@ -891,7 +891,7 @@ this message and the READMEs.  Stay Tuned!
       # reformat the original spectrum to 
       # an input vector for the inferencer
       inp = []
-      for i,b in enumerate(ospect[0:-1]):
+      for i,b in enumerate(ospect):
         o = abs(int(b))
         if o > 255:
           o = 255
@@ -904,7 +904,9 @@ this message and the READMEs.  Stay Tuned!
           predicted_output = model(sample_input)
       # make prediction
       predicted_output = predicted_output.numpy().flatten()
-      # convert output cfg vector to a byte[512] opl3 register file    
+      # convert output cfg vector to a byte[512] opl3 register file   
+      q = opl3.rfToV(opl3.initRegFile())
+      opl3.showVector(predicted_output) 
       regfile = opl3.vToRf(predicted_output)
     # -------------------------------------
     # GENETIC ALGORITHM FUN ---------------
