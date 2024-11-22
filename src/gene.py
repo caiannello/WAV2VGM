@@ -33,7 +33,18 @@ class gene:
     ct = len(self.p)
     if ct>self.p_max:
       self.p = self.p[0:self.p_max]
-  def generate(self, desperation):
+  def verifyAll(self):
+    self.p.sort(key=lambda m: m['fit'])
+    global opl3
+    for i,o in enumerate(self.p[0:10]):
+      f = deepcopy(o['fit'])
+      s = deepcopy(o['spect'])
+      v = deepcopy(o['genome'])
+      vfit, vspect = opl3.fitness(self.ideal, v)
+      dif = abs(vfit-f)
+      print(f'p[{i:3d}]: p.fit={f:10.5f}, vfit={vfit:10.5f}')
+
+  def generate(self, desperation, quiet):
     splitpoint = len(self.p)//2
     while self.p[splitpoint]['spect'] is None:      
       splitpoint-=1
@@ -103,8 +114,8 @@ class gene:
 
       # add child to population
       self.add(gchild)
-
-    print(f'mutants:{mutants:3d}',end='')      
+    if not quiet:
+      print(f'mutants:{mutants:3d}',end='')      
 ###############################################################################
 # EOF
 ###############################################################################

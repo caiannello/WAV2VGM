@@ -46,11 +46,14 @@ MAX_SYNTH_CHANS = 18   # polyphony of synth (num independent oscillators)
 OPL3_MAX_FREQ = 6208.431  # highest freq we can assign to a voice (fnum, block)
 SPECT_VERT_SCALE = 3  # set max vert spect axis to 7350 Hz max rather than the orig 22050 Hz  
 GENE_MAX_GENERATIONS = 500
+SPECS_PER_FRAME = 3  
+
 # -----------------------------------------------------------------------------
 NO_QUIT   = 0  # neither
 SOFT_QUIT = 1  # esc-pressed
 HARD_QUIT = 2  # window close
 
+best_vects = []
 # opl emulator, register data, and helper functions for converting
 # between binary and float32[] config vector for AI training and inference
 
@@ -661,11 +664,13 @@ def improveMatch(frame, tot_frames, ospect, permutables):
         if event.key == pygame.K_ESCAPE:
           return SOFT_QUIT
         elif event.key == pygame.K_RETURN:
+          ga.verifyAll()          
           return NO_QUIT
     hfit = float(ga.p[0]['fit'])
     hspect = deepcopy(ga.p[0]['spect'])
     hgenome = deepcopy(ga.p[0]['genome'])
     improved = False
+    quiet = True
     if hspect is not None:
       if initfit is None:
         initfit = hfit
@@ -673,9 +678,11 @@ def improveMatch(frame, tot_frames, ospect, permutables):
         best_fit = hfit + 1
       tnow = time.time()
       tdelt = tnow-tstart
-      tstart = tnow  
-      print(f'Frame:{frame+1}/{tot_frames}, Gen.:{gen:3d}, fit:{hfit:14.9f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
-      sys.stdout.flush()
+      if tdelt>=10.0:
+        quiet = False
+        tstart = tnow  
+        print(f'Frame:{frame+1}/{tot_frames}, Gen.:{gen:3d}, fit:{hfit:14.9f}, tdelt:{tdelt:0.2f}, desperation:{int(desperation):2d}, ',end='')
+        sys.stdout.flush()
       if hfit < best_fit:
         improved = True
         best_fit = hfit
@@ -698,21 +705,27 @@ def improveMatch(frame, tot_frames, ospect, permutables):
       pygame.display.update()
     tweaks = -1
     if (not improved) and (best_spect is not None):
-      fit, newv, tweaks = autoTweak(ospect, hfit, hgenome, permutables)
+      ogenome = deepcopy(hgenome)
+      fit, newv, tweaks = autoTweak(ospect, hfit, ogenome, permutables)
       if tweaks == 0:
         desperation += 1
         if desperation >= 50:
           print(' -- Moving on.\n')
-          break
+          fitness, tspect = opl3.fitness(ospect, ga.p[0]['genome'])
+          print(f'improveMatch(): Best fit was {ga.p[0]['fit']}.  verification {fitness}')
+          ga.verifyAll()
+          return NO_QUIT  
       else:      
         ga.add(newv)  
-    ga.generate(desperation)
-    if tweaks != -1:
-      print(f', tweaks: {tweaks}')
-    else:
-      print()
+    ga.generate(desperation, quiet)
+    if not quiet:
+      if tweaks != -1:
+        print(f', tweaks: {tweaks}')
+      else:
+        print()
   fitness, tspect = opl3.fitness(ospect, ga.p[0]['genome'])
   print(f'improveMatch(): Best fit was {ga.p[0]['fit']}.  verification {fitness}')
+  ga.verifyAll()
   return NO_QUIT  
 # -----------------------------------------------------------------------------
 # brute force - start with sum of sines, then do GA
@@ -730,7 +743,7 @@ def do_brute(frame, tot_frames, ospect,permutables):
     if chan>=12:
       break
     if pheight<-48.0:
-      break
+      break 
     vfreq = pfreq/OPL3_MAX_FREQ
     vamp = pheight/-48  # -48dBFS...0 dBFS : float 1.0...0.0
     vvals.append([float(vfreq),float(vamp)])  
@@ -750,7 +763,7 @@ def do_brute(frame, tot_frames, ospect,permutables):
     ch+=1
     if ch>=18:
       break
-
+  del ga
   ga = gene.gene(500, ospect, [i for i in range(0,222)], mutatefcn)
   for i in range(10):
     ga.add(v)
@@ -758,7 +771,6 @@ def do_brute(frame, tot_frames, ospect,permutables):
   regfile = None
   if not do_quit:
     regfile = opl3.vToRf(ga.p[0]['genome'])
-
   return regfile, do_quit
 # -----------------------------------------------------------------------------
 # WIP EXPERIMENT- 
@@ -772,6 +784,7 @@ def bruteForce(brute = False, genetic = False, ai = False):
   global screen_height  
   global opl3
   global ga
+  global SPECS_PER_FRAME
   ww = int(screen_width)
   hh = int(screen_height//4)
   slen = len(origspect.spectrogram)
@@ -779,7 +792,6 @@ def bruteForce(brute = False, genetic = False, ai = False):
     # The spectragram has 172.265625 spectra/sec,
   # so if we do every third spectrum in this brute-force
   # loop, that'll be a frame rate of 57.421875 Hz.
-  SPECS_PER_FRAME = 3  
   try:
     if ai:
       model = OPL3Model()
@@ -943,7 +955,7 @@ this message and the READMEs.  Stay Tuned!
     # for later conversion to VGM. (TODO!!)
     if regfile is not None:
       v = opl3.rfToV(regfile)
-      fitness, spect = opl3.fitness(ospect, v)      
+      fitness, spect = opl3.fitness(ospect, v)   
       print(f'output fitness: {fitness=:8.2f}')
       with open(tmpfile,'ab') as f:
         f.write(regfile)
@@ -957,6 +969,7 @@ def loadRegfile():
   global screen_width
   global screen_height
   global opl3 
+  global SPECS_PER_FRAME
   ww = int(screen_width)
   hh = int(screen_height//4)
 
@@ -985,7 +998,7 @@ def loadRegfile():
   prevv = None
 
   frame_vects = []  # gather opl3 register changes per frame
-
+  fits = []
   # data input loop
   for frame in range(tot_frames):  # for each frame (opl config) in file
 
@@ -1008,27 +1021,35 @@ def loadRegfile():
       # the number of register writes needed in the VGM file.
       pass
 
-    ospect = origspect.spectrogram[frame*2][0:-1]
+    ospect = origspect.spectrogram[frame*SPECS_PER_FRAME][0:-1]
     fitness,spect = opl3.fitness(ospect, v)
+    fits.append({'frame':frame, 'fit':fitness, 'spect':spect, 'ospect':deepcopy(ospect)})
     print(f'frame: {frame+1}/{tot_frames}: {fitness=:8.2f}')
 
-    '''
     # render the latest synth configuration and draw spectrum
     wave, tspect = opl3.renderOPLFrame(v)
     if tspect is not None: 
       pygame.draw.rect(screen,(0,0,0),(0,0,ww,hh))
       plotTestSpect(ospect,-115,0,(255,255,255))   # plot spect from predicted config
-      plotTestSpect(tspect,-115,0,(255,255,0))   # plot spect from predicted config
-      pygame.display.update()
-      #time.sleep(5)
-    '''
-    # get ready for next frame
+      if fitness < 150:
+        color = (0,255,0)
+      elif fitness < 300:
+        color = (255,255,0)
+      else:  
+        color = (255,0,0)
 
+      plotTestSpect(tspect,-115,0,color)   # plot spect from predicted config
+      pygame.display.update()
+      time.sleep(0.5)
+    # get ready for next frame
     frame_vects.append( v )
     prevv = v
-
   # end data input loop
   infile.close()
+
+  fits.sort(key=lambda m:-m['fit'] )
+  for f in fits:
+    print(f['frame'],f['fit'])
 
   # todo: render output, make VGM.
 

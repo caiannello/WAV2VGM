@@ -239,9 +239,8 @@ class OPL3:
 
     return False
 
+  # configure the OPL emulator from a bytes[512]
   def _writeRegFile(self, rf) -> None:
-    # todo, only call writereg for known valid 
-    # register addresses.
     for i,v in enumerate(rf):
       if self.isValidReg(i):
         self._opl.writeReg( i, v)
@@ -259,12 +258,6 @@ class OPL3:
       u = random.random()
       # Apply exponential decay to bias toward lower values
       return math.exp(-u * 10.0)
-
-  '''
-  for j in range(1000):
-    print(f'{randomAtten():6.4f}')
-  exit()
-  '''
 
   # used by the code to combine two 2-op channels
   # in dc dict, c0 and c1, into a single 4-op 
@@ -619,7 +612,20 @@ class OPL3:
       return None, None
     #print(type(cfg))
     #exit()
+    self._bit_depth = 16
+    self._buffer_size = 512
+    self._channels = 2
+    self._buffer = self._create_bytearray(self._buffer_size)
+    self._frequency = 44100 #49716
+    self._opl: pyopl.opl = pyopl.opl(
+      self._frequency,
+      sampleSize=(self._bit_depth // 8),
+      channels=self._channels,
+    )
+    self._sample_overflow = 0
+    self._output = bytes()
 
+    
     if isinstance(cfg, dict):  # if config is an old-style opl reg dict
       rf = self.initRegFile()
       keys = list(cfg.keys())
@@ -646,7 +652,7 @@ class OPL3:
       self._writeRegFile(cfg)   # bytes[512] opl3 register file
     self._output = bytes()
     # render 4096 samples
-    self._render_samples(4096+256)  
+    self._render_samples(4096)  
     _, wave = self.stereoBytesToNumpy(self._output)
     # if not flat-line, generate spectrogram
     if wave.sum():
