@@ -30,6 +30,7 @@ import torch.nn as nn
 
 from src import spect as sp
 from src.OPL3 import OPL3
+from src.w2vproj import W2VProj
 from src import gene                # Import 
 from src.model_definitions import OPL3Model  # AI model defs
 
@@ -101,12 +102,15 @@ if len(sys.argv)==2:
 else:
   # default input file during dev, if no file specified on the commandline.
   wavname = infolder
-  wavname += 'HAL 9000 - Human Error.wav'
+  #wavname += 'HAL 9000 - Human Error.wav'
+  #wavname += 'Grand Piano.wav'  
   #wavname += 'JFK Inaguration.wav'
   #wavname += 'Ghouls and Ghosts - The Village Of Decay.wav'
   #wavname += 'Portal-Still Alive.wav'
-  #wavname += 'Amiga-Leander-Intro.wav'
+  wavname += 'Amiga-Leander-Intro.wav'
+
 output_vgm_name = outfolder+os.path.basename(wavname[0:-3])+"vgz"
+temp_regfile_name = tmpfolder+os.path.basename(wavname[0:-3])+'bin'
 origspect = sp.spect(wav_filename=wavname,nperseg=4096,quiet=False,clip=False)
 clock = pygame.time.Clock()
 screen=pygame.display.set_mode([screen_width,screen_height])#,flags=pygame.FULLSCREEN)
@@ -186,6 +190,15 @@ def plotText(s,x,y):
   h=img.get_height()
   pygame.draw.rect(screen,(0,0,0),(x,y,w,h))
   screen.blit(img, (x, y))
+
+def plotColorText(s,c,x,y):
+  global screen, origspect
+  img = font.render(s, True, c)
+  w=img.get_width()
+  h=img.get_height()
+  pygame.draw.rect(screen,(0,0,0),(x,y,w,h))
+  screen.blit(img, (x, y))
+
 # -----------------------------------------------------------------------------
 # given a single spectrum (a vertical slice of spectrogram), identify 
 # all prominent peaks. Returns their freqs in Hz and heights in dBFS.
@@ -260,6 +273,45 @@ def plotTestSpect(tsp,minv,maxv,gcolor=(255,255,255),yofs=0):
       print(f'{e} {(x0,y0)=}-{(x1,y1)=} {i=} {screen_width=} {ll=}')
 
   return mypeaks
+# -----------------------------------------------------------------------------
+# draw a single spectrum along the top of screen with peaks marked and
+# optional cursors 
+# -----------------------------------------------------------------------------
+def plotHalfSpect(tsp,minv,maxv,gcolor=(255,255,255),yofs=0):
+  global screen
+  ll = len(tsp)
+  ww = int(screen_width)
+  hh = int(screen_height/2)
+  hsr = origspect.sample_rate/2
+
+  if minv==maxv: # dont wanna /0
+    return
+
+  # opl freq cutoff line
+  x = screen_width-1 - (OPL3_MAX_FREQ * screen_width / hsr)
+  pygame.draw.line(screen, (0,255,255), (x,0+yofs),(x,hh+yofs))
+
+  # opl amp cutoff line
+  v0=int(((-48)-minv)*hh/(maxv-minv))
+  y0=hh-1-v0
+  pygame.draw.line(screen, (255,255,0), (0,y0+yofs),(ww-1,y0+yofs))
+
+  # draw spectrum 
+  for i in range(0,ll-1):
+    x0=int(i*screen_width/ll)
+    x1=int((i+1)*screen_width/ll)    
+    v0=int((tsp[i]-minv)*hh/(maxv-minv))
+    v1=int((tsp[i+1]-minv)*hh/(maxv-minv))
+    if tsp[i]<minv or tsp[i+1]<minv:      
+      continue
+    y0=hh-1-v0
+    y1=hh-1-v1
+    if x0>=ww and x1>ww:
+      break
+    try:
+      pygame.draw.line(screen, gcolor, (x0,y0+yofs),(x1,y1+yofs))
+    except Exception as e:
+      print(f'plotHalfSpect(): Exception: {e} {(x0,y0)=}-{(x1,y1)=} {i=} {screen_width=} {ll=}')
 # -----------------------------------------------------------------------------
 # draw a single spectrum along the top of screen without peaks marked
 # -----------------------------------------------------------------------------
@@ -340,7 +392,7 @@ def overlayPeaksOnSpectrum(roi,slen, tsp):
   minv = origspect.minval
   maxv = origspect.maxval
   rx = roi*ww/slen
-  rw = (((roi+1)*ww/slen)-rx)+1
+  rw = (((roi+SPECS_PER_FRAME)*ww/slen)-rx)+1
 
   # todo: draw a transparent black rect over the 
   # original spectrum so our detected peaks pop.
@@ -370,10 +422,11 @@ def analyzePeakRuns():
   global screen_height  
 
   slen = len(origspect.spectrogram)
+  maxbin = origspect.maxval
   # keeps track of runs of spectral peaks
   freq_runs = {}
   prior_peaks = []
-  for roi in range(0,slen):  # for each spectrum in spectrogram
+  for roi in range(0,slen,SPECS_PER_FRAME):  # for each spectrum in spectrogram
     # Check if user wants to close program
     for event in pygame.event.get():
       if event.type == pygame.QUIT:  
@@ -381,10 +434,6 @@ def analyzePeakRuns():
       elif event.type == pygame.KEYDOWN:
         if event.key == pygame.K_ESCAPE:
           return SOFT_QUIT        
-
-    # start time of this spectrum within the sound
-    t = roi*origspect.dur_secs/slen        
-
     # draws a vertical slice of spectral peaks over top of 
     # spectrum[roi] of the spectrogram, and returns a list of peak 
     # (freq,height) values sorted by descending height
@@ -406,22 +455,24 @@ def analyzePeakRuns():
           closest = (j,pf,ph,rkey) 
       continuation = False
       if closest is not None:
-        if mindif<35:          
+        if mindif<30:          
           #print(f'{f:0.1f}->{closest[1]:0.1f} ', end='')
           continuation=True
           rkey = closest[3]
-          freq_runs[rkey].append((t,f,h))
+          freq_runs[rkey].append((roi,f,h))
       if not continuation:
         #print(f'{f:0.1f} ', end='')
-        rkey = (t,f)
-        freq_runs[rkey] = [(t,f,h)] # new run
+        rkey = (roi,f)
+        freq_runs[rkey] = [(roi,f,h)] # new run
       new_prior_peaks.append((f,h,rkey))
     prior_peaks = new_prior_peaks
     #print()
     pygame.display.update()
 
-  draw_runs = False
+  draw_runs = True  
   if draw_runs:     # draw the freq runs in dif colors
+    num_frames = slen // SPECS_PER_FRAME
+    frames = [ None ] * num_frames
     ll = len(origspect.spectrogram[roi][0:-1])
     ww = int(screen_width)
     hh = int(screen_height) - T_AXIS_HEIGHT
@@ -429,19 +480,35 @@ def analyzePeakRuns():
     minv = origspect.minval
     maxv = origspect.maxval
     pygame.draw.rect(screen, (0,0,0), (0,0,ww,hh))
-    for rkey in freq_runs:
+    rkeys = []
+    for kidx, rkey in enumerate(freq_runs):
       run = freq_runs[rkey]
-      if len(run)>=3:
+      if len(run)>=2:
         #print(f'{rkey}:')
         c0 = (random.randint(0,255),random.randint(0,255),random.randint(0,255))
-        t,f,h = run[0]
+        r,f,h = run[0]
         #print(f'    {(t,f,h)}')    
-        r0 = t*slen/origspect.dur_secs
+        r0 = r
+        if h>=-48.0 and f<=OPL3_MAX_FREQ:
+          frame = r // SPECS_PER_FRAME
+          if frames[frame] is None:
+            frames[frame] = [(kidx,f,h)]
+          else:
+            frames[frame].append((kidx,f,h))
         x0 = int(r0*ww/slen)
         y0 = hh-int(f*hh/hsr)
         h0 = h
-        for t,f,h in run[1:]:
-          r1 = t*slen/origspect.dur_secs
+
+        for r,f,h in run[1:]:
+          if h>=-48.0 and f<=OPL3_MAX_FREQ:
+            frame = r // SPECS_PER_FRAME
+            if frame>=len(frames):
+              break
+            if frames[frame] is None:
+              frames[frame] = [(kidx,f,h)]
+            else:
+              frames[frame].append((kidx,f,h))
+          r1 = r
           x1 = int(r1*ww/slen)
           y1 = hh-int(f*hh/hsr)
           h1 = h
@@ -458,7 +525,72 @@ def analyzePeakRuns():
           h0=h1
         pygame.display.update()
         #print()
-    return False
+
+    # show cutoff freq as horiz line on peak runs spectrum
+    hsr = origspect.sample_rate/2
+    y = screen_height-1 -T_AXIS_HEIGHT - ( OPL3_MAX_FREQ * (screen_height-T_AXIS_HEIGHT) / hsr)
+    for x in range(0,screen_width-1):
+      if (x&1) == 0:
+        pygame.draw.line(screen, (0,255,255), (x,y),(x,y))
+
+    
+    for roi in range(0,slen,SPECS_PER_FRAME): 
+      x0 = int(roi*ww/slen)
+      pygame.draw.line(screen, (32,64,0), (x0,0),(x0,screen_height-1))
+
+    outframes = []
+    for frame in frames:
+      frame.sort(key=lambda x: -x[2])
+    chans = [ None ] * 18
+    for fi,frame in enumerate(frames):
+      #print(f'Frame {fi:3d}: ',end='')
+      unassigned = []
+      unupdated = [ i for i in range(0,18)]
+      for pi,f in enumerate(frame):
+        kidx,freq,h = f
+        if fi == 0:
+          if pi<=17:
+            chans[pi] = f
+            del unupdated[unupdated.index(pi)]
+        else:
+          chanat = None
+          for ch in range(0,18):
+            if chans[ch][0] == kidx:
+              chanat = ch
+              break
+          if chanat is not None:
+            chans[chanat] = f
+            del unupdated[unupdated.index(chanat)]
+          else:
+            unassigned.append(f)
+      for x,u in enumerate(unupdated):        
+        if x<len(unassigned):
+          chans[u] = unassigned[x]
+        else:
+          chans[u] = (0,0,-99.0)
+      #print(f'{chans=} {unassigned=}')
+      outframes.append(deepcopy(chans))
+      #print(f'({kidx:d},{freq:0.1f},{int(h):d}), ',end='')
+      #print()
+    #exit()
+    #print('\nSynth output plan:\n')
+    yeahframes = []
+    for fi,o in enumerate(outframes):
+      #print(f'Frame #{fi:3d}: ',end='')
+      frame = []
+      for ci,(ki,fr,h) in enumerate(o):
+        ct = (ci, fr, h)
+        frame.append(ct)
+      yeahframes.append(frame)
+      #print()
+
+    #print('\n\n')
+    #for frame in yeahframes:
+    #  print(frame)
+    #exit()
+    pygame.display.update()
+
+    return NO_QUIT, yeahframes
 # -----------------------------------------------------------------------------
 # WIP UI stuff
 # -----------------------------------------------------------------------------
@@ -733,6 +865,18 @@ def improveMatch(frame, tot_frames, ospect, permutables):
 def do_brute(frame, tot_frames, ospect,permutables):
   global opl3
   global ga
+
+  ovects = []
+  try:
+    with open(temp_regfile_name,'rb') as f:
+      while True:
+        r = f.read(512)
+        if len(r)!=512:
+          break
+        v = opl3.rfToV(r)
+        ovects.append(v)
+  except Exception as e:
+    print(e)
   peaks = getRankedPeaks(ospect, -115.0, 0, True, 5, 5)
   # make original estimate by setting the OPL to 
   # generate a sine wave per each spectral peak
@@ -763,10 +907,21 @@ def do_brute(frame, tot_frames, ospect,permutables):
     ch+=1
     if ch>=18:
       break
+
+
   del ga
   ga = gene.gene(500, ospect, [i for i in range(0,222)], mutatefcn)
-  for i in range(10):
+  if len(ovects):
+    for i in range(len(ovects)):
+      ga.add(ovects[i])
+  for i in range(50):
     ga.add(v)
+  if len(ovects):
+    for i in range(len(ovects)):
+      ga.add(ovects[i])
+  for i in range(50):
+    ga.add(v)
+
   do_quit = improveMatch(frame, tot_frames, ospect, permutables)
   regfile = None
   if not do_quit:
@@ -826,7 +981,7 @@ this message and the READMEs.  Stay Tuned!
   # init intermediate output file of opl3 reg settings for
   # later conversion to a VGM. (TODO!)
   # See if we have a work-in-progress file.
-  tmpfile = tmpfolder+'reg_files.bin'
+  tmpfile = temp_regfile_name
   try:
     tsize = os.path.getsize(tmpfile)
   except:
@@ -936,7 +1091,7 @@ this message and the READMEs.  Stay Tuned!
       print('Starting permutations.')
       # Do a (slow) genetic annealing process to
       # try to improve the result. 
-      do_quit = improveMatch(frame, tot_frames, ospect)
+      do_quit = improveMatch(frame, tot_frames, ospect, [i for i in range(0,222)])
       if do_quit:
         print('Brute force - quitting!')
         if do_quit == SOFT_QUIT:
@@ -963,13 +1118,20 @@ this message and the READMEs.  Stay Tuned!
 # -----------------------------------------------------------------------------
 # loading and processing the output of bruteforce
 # -----------------------------------------------------------------------------
+_2op_chans = {
+   0:[ 0, 3], 1 :[ 1, 4],  2:[ 2, 5],  3:[ 6, 9],
+   4:[ 7,10], 5 :[ 8,11],  6:[12,15],  7:[13,16],
+   8:[14,17], 9 :[18,21], 10:[19,22], 11:[20,23],
+  12:[24,27], 13:[25,28], 14:[26,29], 15:[30,33],
+  16:[31,34], 17:[32,35] }
+
 def loadRegfile():
   global origspect
   global screen
   global screen_width
   global screen_height
   global opl3 
-  global SPECS_PER_FRAME
+  global SPECS_PER_FRAME, _2op_chans
   ww = int(screen_width)
   hh = int(screen_height//4)
 
@@ -981,7 +1143,7 @@ def loadRegfile():
   # init intermediate output file of opl3 reg settings for
   # later conversion to a VGM. (TODO!)
   # See if we have a work-in-progress file.
-  tmpfile = tmpfolder+'reg_files.bin'
+  tmpfile = temp_regfile_name
   try:
     tsize = os.path.getsize(tmpfile)
   except:
@@ -1015,6 +1177,19 @@ def loadRegfile():
     v = opl3.rfToV(regfile)
 
     if prevv is not None:
+      print(f'#{frame:3d}:',end='')
+      newchans = [i for i in range(0,18)]
+      for prevch in range(0,18):
+        prevkeyon = opl3.vecGetNamedFloat(prevv, f'KeyOn.c{prevch}')
+        prevfreq = opl3.vecGetNamedFloat(prevv, f'Freq.c{prevch}')*OPL3_MAX_FREQ
+        oidx = _2op_chans[prevch][0]
+        prevvol = opl3.vecGetNamedFloat(prevv, f'AttnLv.o{oidx}')
+        mindif = 99999
+        minat = -1
+        if prevkeyon>=0.5:
+          print(f'({prevch:2d},{prevfreq:6.1f},{prevvol:5.3f}) ',end='')
+      print(f'')
+
       # rearrange this vector to align its channels to
       # similar-sounding channels of the predecessor.
       # This may sound smoother (less clicks) and reduce
@@ -1024,7 +1199,7 @@ def loadRegfile():
     ospect = origspect.spectrogram[frame*SPECS_PER_FRAME][0:-1]
     fitness,spect = opl3.fitness(ospect, v)
     fits.append({'frame':frame, 'fit':fitness, 'spect':spect, 'ospect':deepcopy(ospect)})
-    print(f'frame: {frame+1}/{tot_frames}: {fitness=:8.2f}')
+    #print(f'frame: {frame+1}/{tot_frames}: {fitness=:8.2f}')
 
     # render the latest synth configuration and draw spectrum
     wave, tspect = opl3.renderOPLFrame(v)
@@ -1040,16 +1215,16 @@ def loadRegfile():
 
       plotTestSpect(tspect,-115,0,color)   # plot spect from predicted config
       pygame.display.update()
-      time.sleep(0.5)
+      #time.sleep(0.5)
     # get ready for next frame
     frame_vects.append( v )
     prevv = v
   # end data input loop
   infile.close()
 
-  fits.sort(key=lambda m:-m['fit'] )
-  for f in fits:
-    print(f['frame'],f['fit'])
+  #fits.sort(key=lambda m:-m['fit'] )
+  #for f in fits:
+  #  print(f['frame'],f['fit'])
 
   # todo: render output, make VGM.
 
@@ -1063,6 +1238,87 @@ def loadRegfile():
 # Currently, we set it up to do 18 plain sine waves.
 # -----------------------------------------------------------------------------
 prev_sets = {}
+op_reg_ofs = [ 
+  0x000,  0x001,  0x002,  0x003,  0x004,  0x005,  0x008,  0x009,  0x00A,  # bank 0
+  0x00B,  0x00C,  0x00D,  0x010,  0x011,  0x012,  0x013,  0x014,  0x015,
+  0x100,  0x101,  0x102,  0x103,  0x104,  0x105,  0x108,  0x109,  0x10A,  # bank 1 (OPL3 only)
+  0x10B,  0x10C,  0x10D,  0x110,  0x111,  0x112,  0x113,  0x114,  0x115,
+  ]
+
+def opl3init2():
+  '''
+      rf = self.RF(rf,0x105,0x01)
+    for i in range(0,36):
+      o=self.op_reg_ofs[i]
+      rf = self.RF(rf,0x20|o,0b00100000)   # enable sustain
+      rf = self.RF(rf,0x60|o,0xff)   # fast envelopes
+      rf = self.RF(rf,0x80|o,0x0f)   # sustain level to loudeest
+  '''
+  global prev_sets, opl3, op_reg_ofs
+  prev_sets = {}
+
+  opl3._do_init()
+  res = b''
+  # enable opl3 mode
+  r = 0x05
+  v = 0x01
+  opl3._writeReg(1,r,v);
+  res+=struct.pack('BBB',0x5f,r,v)
+
+  r = 0x04
+  v = 0x00
+  opl3._writeReg(1,r,v);
+  res+=struct.pack('BBB',0x5f,r,v)
+
+  for i in range(0,36):
+    o = op_reg_ofs[i]
+
+    r = 0x20|o
+    v = 0b00100001
+    if r>0xff:
+      opl3._writeReg(1,r&0xff,v);
+      res+=struct.pack('BBB',0x5f,r&0xff,v)
+    else:
+      opl3._writeReg(0,r,v);
+      res+=struct.pack('BBB',0x5e,r,v)
+
+    r = 0x60|o
+    v = 0xff
+    if r>0xff:
+      opl3._writeReg(1,r&0xff,v);
+      res+=struct.pack('BBB',0x5f,r&0xff,v)
+    else:
+      opl3._writeReg(0,r,v);
+      res+=struct.pack('BBB',0x5e,r,v)
+
+    r = 0x80|o
+    v = 0x0f
+    if r>0xff:
+      opl3._writeReg(1,r&0xff,v);
+      res+=struct.pack('BBB',0x5f,r&0xff,v)
+    else:
+      opl3._writeReg(0,r,v);
+      res+=struct.pack('BBB',0x5e,r,v)
+
+    r = 0xe0|o
+    v = 0x00
+    if r>0xff:
+      opl3._writeReg(1,r&0xff,v);
+      res+=struct.pack('BBB',0x5f,r&0xff,v)
+    else:
+      opl3._writeReg(0,r,v);
+      res+=struct.pack('BBB',0x5e,r,v)
+
+  for i in range(0,9):
+    opl3._writeReg(1,0xc0+i,0x31);
+    res+=struct.pack('BBB',0x5f,0xc0+i,0x31)
+    opl3._writeReg(0,0xc0+i,0x31);
+    res+=struct.pack('BBB',0x5e,0xc0+i,0x31)
+    
+
+  return res
+
+
 
 def opl3init():
   global prev_sets, opl3
@@ -1077,10 +1333,14 @@ def opl3init():
 
   res+=struct.pack('BBB',0x5f,r,v)
   # enable waveform select
-  r = 0x01
-  v = 0x20
-  opl3._writeReg(1,r,v);
-  res+=struct.pack('BBB',0x5f,r,v)
+  #r = 0x01
+  #v = 0x20
+  #opl3._writeReg(1,r,v);
+  #res+=struct.pack('BBB',0x5f,r,v)
+
+  #rf = self.RF(rf,0x20|o,0b00100000)   # enable sustain
+  #rf = self.RF(rf,0x60|o,0xff)   # fast envelopes
+  #rf = self.RF(rf,0x80|o,0x0f) 
 
   for chan in range(0,18):
     opidxs = opidxs_per_chan[chan]
@@ -1216,7 +1476,7 @@ def opl3params(freq,namp,chan, keyon):
         res+=struct.pack('BBB',0x5e,r,v)
       else:
         chan-=9
-        r = 0xb0 + chan - 9
+        r = 0xb0 + chan
         v = ((fnum>>8)&3) | (block<<2)
         opl3._writeReg(1,r,v);      
         res+=struct.pack('BBB',0x5f,r,v)
@@ -1264,14 +1524,85 @@ def opl3params(freq,namp,chan, keyon):
         v = fnum&0xff
         opl3._writeReg(1,r,v);              
         res+=struct.pack('BBB',0x5f,r,v)
-        r = 0xb0 + chan - 9    # key-on and high bits of freq
+        r = 0xb0 + chan    # key-on and high bits of freq
         v = 0b00100000 | ((fnum>>8)&3) | (block<<2)
         opl3._writeReg(1,r,v);              
         res+=struct.pack('BBB',0x5f,r,v)
     prev_sets[schan] = (freq,namp,keyon)
-
-
   return res
+# -----------------------------------------------------------------------------
+# Returns an OPL3 register set sequence to set a specified channel to 
+# the specified frequency, volume, and/or key on/off.
+# -----------------------------------------------------------------------------
+chan_reg_ofs = [
+  0x000, 0x001, 0x002, 0x003, 0x004, 0x005, 0x006, 0x007, 0x008, 
+  0x100, 0x101, 0x102, 0x103, 0x104, 0x105, 0x106, 0x107, 0x108
+]
+
+
+def opl3params2(freq,namp,chan, keyon):
+  global prev_sets, opl3, op_reg_ofs, chan_reg_ofs
+
+  fnum, block = opl3.freqToFNumBlk(freq)
+  opidxs = opidxs_per_chan[chan]
+
+  res = b''
+  if not keyon:               # key off
+    if chan<9:
+      r = 0xb0 + chan
+      v = ((fnum>>8)&3) | (block<<2)
+      opl3._writeReg(0,r,v);              
+      res+=struct.pack('BBB',0x5e,r,v)      
+    else:
+      chan-=9
+      r = 0xb0 + chan
+      v = ((fnum>>8)&3) | (block<<2)
+      opl3._writeReg(1,r,v);      
+      res+=struct.pack('BBB',0x5f,r,v)
+  else:                         # key on
+    aval = int(0x3F*namp)
+    if aval>0x3f:
+      aval = 0x3f
+    if aval<0:
+      aval = 0
+    if chan<9:
+      r = 0x40 + opToOfs(opidxs[0])  # set volume
+      v = 0b01000000|aval
+      opl3._writeReg(0,r,v);              
+      res+=struct.pack('BBB',0x5e,r,v)
+      r = 0x40 + opToOfs(opidxs[1])
+      v = 0b01000000|aval
+      opl3._writeReg(0,r,v);              
+      res+=struct.pack('BBB',0x5e,r,v)
+      r = 0xA0 + chan  # set low bits of frequency
+      v = fnum&0xff
+      opl3._writeReg(0,r,v);              
+      res+=struct.pack('BBB',0x5e,r,v)
+      r = 0xb0 + chan  # set key-on and high bits of frequency
+      v = 0b00100000 | ((fnum>>8)&3) | (block<<2)
+      opl3._writeReg(0,r,v);              
+      res+=struct.pack('BBB',0x5e,r,v)
+    else:
+      chan-=9
+      a = opToOfs(opidxs[0] - 18)
+      b = opToOfs(opidxs[1] - 18)
+      r = 0x40 + a # volume
+      v = 0b01000000|aval
+      opl3._writeReg(1,r,v);              
+      res+=struct.pack('BBB',0x5f,r,v)
+      r = 0x40 + b
+      v = 0b01000000|aval
+      opl3._writeReg(1,r,v);
+      res+=struct.pack('BBB',0x5f,r,v)
+      r = 0xA0 + chan # low bits of freq
+      v = fnum&0xff
+      opl3._writeReg(1,r,v);              
+      res+=struct.pack('BBB',0x5f,r,v)
+      r = 0xb0 + chan    # key-on and high bits of freq
+      v = 0b00100000 | ((fnum>>8)&3) | (block<<2)
+      opl3._writeReg(1,r,v);              
+      res+=struct.pack('BBB',0x5f,r,v)
+  return res  
 # -----------------------------------------------------------------------------
 # fill out the information section (GD3) of the output VGM file
 # -----------------------------------------------------------------------------
@@ -1319,6 +1650,9 @@ def fastAnalyze():
   max_height = -999999
   min_height = 9999999
 
+  opl3 = OPL3()
+  opl3._sample_overflow = 0
+  opl3._output = bytes() 
   rows = []
   lt = 0
   for pi, peaks in enumerate(all_peaks):
@@ -1395,6 +1729,81 @@ def fastAnalyze():
     pygame.time.Clock().tick(10)
   print('Done!')
 # -----------------------------------------------------------------------------
+def makeVGM(yayframes):
+  global origspect
+  global screen
+  global screen_width
+  global screen_height  
+  global opl3
+  minv = origspect.minval
+  maxv = origspect.maxval
+
+  opl3 = OPL3()
+  opl3._sample_overflow = 0
+  opl3._output = bytes() 
+
+  # make and write the VGZ output file
+  print('Making output file (VGZ)...')
+  # these bytes are the VGM header which specifies that we want OPL3 at 14.318 MHz!
+  # TODO: Any of the dozen other synth types supported by the VGM file format!
+  outvgm = b'Vgm \xd3\xcb\x00\x00Q\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xcd\xca\x00\x00\x8a\x12}\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x8c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00dz\xda\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+  outvgm+=opl3init2()
+  for fidx,frame in enumerate(yayframes):
+    print(f'{fidx=}: ',end='')
+    for ct in frame:
+      chan, freq, peakheight = ct
+      peakheight -= maxv
+      keyon = True
+      if peakheight < -48:
+        keyon = False
+        namp = 1.0
+      else:
+        namp = peakheight/-48.0
+        if namp>1.0:
+          namp =  1.0
+        elif namp<0.0:
+          namp =  0.0
+      print(f'({chan:2d},{freq:6.1f},{int(peakheight):3d},{namp:4.2f}),', end='')
+      outvgm += opl3params2(freq,namp,chan,keyon)
+    print()
+    opl3._render_ms(1000/57.4149659864)
+    outvgm+=struct.pack("<BH",0x61,int(44100/57.4149659864))
+
+  outvgm+=b'\x66'
+  gd3_ofs = len(outvgm)-0x14
+  gd3_dat = makeGD3()
+  outvgm+=gd3_dat
+  vgm_eof_ofs = len(outvgm)-0x04
+  outvgm=outvgm[0:4]+struct.pack('<I',vgm_eof_ofs)+outvgm[8:0x14]+struct.pack('<I',gd3_ofs)+outvgm[0x18:]
+  with gzip.open(output_vgm_name, 'wb') as f:
+      f.write(outvgm)    
+
+  stereo_wave, mono_wave = opl3.stereoBytesToNumpy(opl3._output)
+  print('\nMaking spectrogram of result...')
+  outspect = sp.spect(wav_filename=None,samples=mono_wave,nperseg=4096,quiet=False,clip=True)
+  drawSpect(outspect,0,0,screen_width,screen_height)
+  stereo_wave=pygame.sndarray.make_sound(stereo_wave)
+  print('\nPlaying result...',end='')
+  sys.stdout.flush()
+  pygame.mixer.Sound.play(stereo_wave)
+  while pygame.mixer.get_busy(): 
+    pygame.time.Clock().tick(10)
+  print('Done!')  
+# -----------------------------------------------------------------------------
+def writeVgmFile(vgmdata):
+  # these bytes are the VGM header which specifies that we want OPL3 at 14.318 MHz!
+  # TODO: Any of the dozen other synth types supported by the VGM file format!
+  outvgm = b'Vgm \xd3\xcb\x00\x00Q\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xcd\xca\x00\x00\x8a\x12}\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x8c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00dz\xda\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+  outvgm+=vgmdata
+  gd3_ofs = len(outvgm)-0x14
+  gd3_dat = makeGD3()
+  outvgm+=gd3_dat
+  vgm_eof_ofs = len(outvgm)-0x04
+  outvgm=outvgm[0:4]+struct.pack('<I',vgm_eof_ofs)+outvgm[8:0x14]+struct.pack('<I',gd3_ofs)+outvgm[0x18:]
+  with gzip.open(output_vgm_name, 'wb') as f:
+      f.write(outvgm)    
+  print('Wrote VGM file!')   
+# -----------------------------------------------------------------------------
 # iterates through the test set (spectrum + cfg) and verifies that the each 
 # spectrun is the result of that synth config.
 # The spect bins were converted to bytes like this:  uint8=255-(-dBFS)&0xFF
@@ -1449,37 +1858,241 @@ def testTrainingSet():
 
   print('testTrainingSet(): Ending.')
   return NO_QUIT
-# -----------------------------------------------------------------------------
-def chanBruteForce():
-  global origspect, opl3  
-  global ga
-  CHANS_PER_FRAME = 3
-  slen = len(origspect.spectrogram)
-  num_frames = slen // CHANS_PER_FRAME
+# -----------------------------------------------------------------------------  
+# UI for stepping through all the frames of the loaded spectrogram and 
+# allowing manual/automatic tuning of all 222 synth params per each frame.
+#
+# all tentative frame configs are kept in a tempfile named after orig filename
+# and can be resumed after restart.
+# -----------------------------------------------------------------------------  
+def manualControls():
+  global origspect
+  global SPECS_PER_FRAME
+  global opl3
+  global screen_width, screen_height
+  hh = screen_height // 2
+  ww = screen_width
+  print('\n\n\nStarting manual control:\n\n')
+  chromosome_lens = [25,25,25,12,12,12,25,25,25,12,12,12]  
+  manualEvtLoop = True
 
-  v = opl3.rfToV(opl3.initRegFile())
-  apidxs,akeyons,alvls,afreqs = opl3.vecGetPermutableIndxs(v)
-  
-  for frame in range(num_frames):
-    ospect = deepcopy(origspect.spectrogram[frame*CHANS_PER_FRAME][0:-1])
-    for chan in range(0,18):
-      print(f'Frame {frame+1}/{num_frames}, chan {chan} ------------- ')
-      pidxs = apidxs[chan]
-      keyons = akeyons[chan]
-      lvls = alvls[chan]
-      freqs = afreqs[chan]
-      for k in keyons: # set keyon for next channel        
-        v[k] = 1.0
-      # permute v[idxs] to minimize tspect dif with wspect
-      ga = gene.gene(opl3, 500, ospect, pidxs)
-      for m in range(0,10):
-        for i in range(0,len(pidxs)):
-          v[pidxs[i]] = random.random()
-        ga.add(gm)
-      do_quit = improveMatch(opl3, frame, num_frames, ospect, pidxs)
-      if do_quit:
-        return do_quit
-      v = ga.p[0]['genome']
+  slen = len(origspect.spectrogram)
+  num_frames = slen//SPECS_PER_FRAME
+
+  mindbfs = origspect.minval
+  maxdbfs = origspect.maxval
+
+  # todo: load tmpfile, if any.
+  # init any undefined opl3 frame configs with 
+  # some kind of quick defaults.
+  # update tmpfile format to include each of the following 
+  # for each frame: cfg, ospect, tspect, fitness.
+  # Also add some global metadata: which frame was last 
+  # being worked on, src wavfile name, total num frames.
+  tmpfile = temp_regfile_name
+  loaded_cfgs = []
+  try:
+    tsize = os.path.getsize(tmpfile)
+    infile = open(tmpfile,'rb')
+    num_loaded_frames = tsize // 512
+    while True:
+      cfg = infile.read(512)
+      if len(cfg)!=512:
+        break
+      loaded_cfgs.append(cfg)
+    infile.close()
+  except:
+    tsize = 0
+  print("Processing audio...")
+  spects = []
+  configs = []
+  vects = [ ]
+  pmax = -9999
+  prev_vvals = None
+  for frame in range(0,num_frames):
+    ospect = origspect.spectrogram[frame*SPECS_PER_FRAME][0:-1]
+    spects.append(deepcopy(ospect))
+    if False: #frame<len(loaded_cfgs):
+      # get working estimate from file
+      rf = loaded_cfgs[frame]
+      v = opl3.rfToV(rf)
+      configs.append(deepcopy(rf))
+      vects.append(deepcopy(v))
+    else:      
+      peaks = getRankedPeaks(ospect, -115.0, 0, True, 5, 5)
+      # no estimate on file, make a simple additive-sine one.
+      l = ''
+      vvals = []
+      for chan,p in enumerate(peaks):
+        pheight, pfreq, _, _, _ = p
+        pheight -= maxdbfs
+        #print(f'{int(pheight):4d} ',end='')
+        if pheight>pmax:
+          pmax=pheight
+
+        if chan>=18:
+          break
+        if pheight<-48.0:
+          break 
+        vfreq = pfreq/OPL3_MAX_FREQ
+        vamp = (pheight+10)/-48  # -48dBFS...0 dBFS : float 1.0...0.0
+        if vamp>1.0:
+          vamp=1.0
+        elif vamp<0.0:
+          vamp=0.0
+        vvals.append([float(vfreq),float(vamp)])      
+      # sort vvals to align channel positions
+      # to similar ones in the preceeding frame
+      if prev_vvals is not None:
+        used_js=[]
+        new_vvals = []
+        for i,(fi,vi) in enumerate(prev_vvals):
+          bestdif = 3.0
+          bestj = -1
+          for j,(fj,vj) in enumerate(vvals):
+            if j not in used_js:
+              dif = abs(fj-fi)
+              if dif<bestdif:
+                bestdif = dif
+                bestj = j
+          if bestdif<=0.05:
+            used_js.append(bestj)
+            fj, vj = vvals[bestj]
+            new_vvals.append([fj,vj])
+        if len(used_js) < len(vvals):
+          for j,(fj,vj) in enumerate(vvals):
+            if j not in used_js:
+              new_vvals.append([fj,vj])
+        '''
+        for i,(f,v) in enumerate(prev_vvals):
+          print(f'({f:6.4f},{v:6.4f}), ',end='')
+        print()
+        for i,(f,v) in enumerate(vvals):
+          print(f'({f:6.4f},{v:6.4f}), ',end='')
+        print()
+        for i,(f,v) in enumerate(new_vvals):
+          print(f'({f:6.4f},{v:6.4f}), ',end='')
+        print()
+        exit()
+        '''
+        vvals = deepcopy(new_vvals)
+      prev_vvals = deepcopy(vvals)
+      #print()
+      ch = 0
+      rf = opl3.initRegFile()
+      v = opl3.rfToV(rf)
+      for vfreq, vamp in vvals:  # for the loudest peaks, assign a sine
+        opl3.setNamedVecElemFloat(v,f'Freq.c{ch}',vfreq)  # Peak freq    
+        opl3.setNamedVecElemFloat(v,f'KeyOn.c{ch}',1.0)   # Key ON
+        opl3.setNamedVecElemFloat(v,f'SnTyp.c{ch}',1.0)   # 2-op AM
+        oidxs = opidxs_per_chan[ch]
+        for q,o in enumerate(oidxs):
+          opl3.setNamedVecElemFloat(v,f'AttnLv.o{o}',vamp)  # amplitude
+          opl3.setNamedVecElemInt(v,f'FMul.o{o}',1)   # op phase multiple
+          opl3.setNamedVecElemInt(v,f'KSAtnLv.o{o}',1)#2) # some attenuation at higher freqs
+        ch+=1
+        if ch>=18:
+          break
+      if ch<18:
+        for cq in range(ch,18):
+          #opl3.setNamedVecElemFloat(v,f'KeyOn.c{cq}',0.0)   # Key ON
+          oidxs = opidxs_per_chan[cq]
+          for q,o in enumerate(oidxs):
+            opl3.setNamedVecElemFloat(v,f'AttnLv.o{o}',1.0)  # amplitude
+            opl3.setNamedVecElemInt(v,f'FMul.o{o}',1)   # op phase multiple
+            opl3.setNamedVecElemInt(v,f'KSAtnLv.o{o}',1)#2) # some attenuation at higher freqs
+      configs.append(opl3.vToRf(v))
+      vects.append(deepcopy(v))
+  #print(f'{pmax=}')
+  print("saving regfile...")
+  # write regfile
+  with open(temp_regfile_name,'wb') as fout:
+    for fidx in range(0,num_frames):
+      fout.write(configs[fidx])
+  print("saved. making project...")
+
+  proj_name = os.path.basename(tmpfile)
+  pfile = W2VProj(proj_name, num_frames, spects, configs)
+  #pprint(pfile.serialize(),indent=2)
+  #exit()
+  print('ready.')
+
+  frame = 0
+  while manualEvtLoop:
+    ospect = origspect.spectrogram[frame*SPECS_PER_FRAME][0:-1]
+    pygame.draw.rect(screen, (0,0,0),(0,0,ww,hh))
+    tspect = None
+    #v = vects[frame]
+    #fit, tspect = opl3.fitness(ospect, v)
+    f = pfile.frames[frame]
+    v = f.synth_cfg_vect
+    tspect = f.synth_spect
+    fit = f.fitness
+    if tspect is not None:
+      c = (255,0,0)
+      if fit<=150:
+        c=(0,255,0)
+      elif fit<=300:
+        c=(255,255,0)
+      plotHalfSpect(tspect,-115,0,c,0)
+      plotColorText(f'{fit:10.5f}',c,8,8)
+    plotHalfSpect(ospect,-115,0,(255,255,255),0)
+    pygame.display.update()
+
+    for event in pygame.event.get():
+      if event.type == pygame.QUIT:  # Usually wise to be able to close your program.
+        return HARD_QUIT
+      elif event.type == pygame.KEYDOWN:
+        if event.key == pygame.K_ESCAPE:
+          return SOFT_QUIT
+        elif event.key == pygame.K_LEFT:
+          frame -= 1
+          if frame < 0:
+            frame = num_frames-1
+        elif event.key == pygame.K_RIGHT:
+          frame += 1
+          if frame >= num_frames:
+            frame = 0
+        elif event.key == pygame.K_p:
+          print('rendering...')
+          opl3 = OPL3()
+          opl3._sample_overflow = 0
+          opl3._output = bytes()
+          origstate = b'\0'*512
+          framedifs = []
+          for fidx in range(0,num_frames):
+            regs = pfile.frames[fidx].synth_cfg_bytes
+            difs = []
+            for i in range(0,512):
+              a = origstate[i]
+              b = regs[i]
+              if a!=b:
+                difs.append([i,b])
+            framedifs.append(difs)
+            opl3._writeRegFile(regs)
+            origstate = deepcopy(regs)
+            opl3._render_ms(1000/57.4149659864)
+            #opl3._render_samples(768)  
+          vgmdata = b''
+          for di,dframe in enumerate(framedifs):
+            #print(f'{di:3d} ')
+            for r,v in dframe:
+              #print(f'(0x{r:03X},0x{v:02x}),')
+              if r>=0x100:
+                vgmdata+=struct.pack('BBB',0x5F,r&0xff,v)
+              else:
+                vgmdata+=struct.pack('BBB',0x5E,r,v)
+            vgmdata+=struct.pack("<BH",0x61,int(44100/57.4149659864))
+            #print()
+          vgmdata+=struct.pack('B',0x66)
+          writeVgmFile(vgmdata)
+          print('playing...')
+          stereo_wave, wave = opl3.stereoBytesToNumpy(opl3._output)
+          stereo_wave=pygame.sndarray.make_sound(stereo_wave)
+          pygame.mixer.Sound.play(stereo_wave)
+          while pygame.mixer.get_busy(): 
+            pygame.time.Clock().tick(10)  
+
 # -----------------------------------------------------------------------------
 # arrows move cursor, if any, which could be either on spectrum or spectrogram
 # spectrum: 
@@ -1506,17 +2119,17 @@ def loop():
       if event.key == pygame.K_ESCAPE:
         return True
       elif event.key == pygame.K_a:
-        doquit = analyzePeakRuns()
+        doquit, yayframes = analyzePeakRuns()
         if doquit == HARD_QUIT:
           return True
-        drawSpect(origspect,0,0,screen_width,screen_height)
+        elif doquit == NO_QUIT:
+          makeVGM(yayframes)
+        #drawSpect(origspect,0,0,screen_width,screen_height)
       elif event.key == pygame.K_f:
         fastAnalyze()
         drawSpect(origspect,0,0,screen_width,screen_height)
       elif event.key == pygame.K_p:
         playWave()
-      elif event.key == pygame.K_c:
-        chanBruteForce()
       elif event.key == pygame.K_t:
         do_quit = testTrainingSet()
         if do_quit == HARD_QUIT:
@@ -1524,6 +2137,11 @@ def loop():
         drawSpect(origspect,0,0,screen_width,screen_height)
       elif event.key == pygame.K_l:
         do_quit = loadRegfile()
+        if do_quit == HARD_QUIT:
+          return True
+        drawSpect(origspect,0,0,screen_width,screen_height)
+      elif event.key == pygame.K_m:
+        do_quit = manualControls()
         if do_quit == HARD_QUIT:
           return True
         drawSpect(origspect,0,0,screen_width,screen_height)

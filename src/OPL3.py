@@ -332,6 +332,11 @@ class OPL3:
     bw = self.vec_elem_bits[x]
     return self.vecFltToInt(f,bw)  
 
+  # Used by vToRf to get a vec element as float
+  def vecGetNamedFloat(self, v, name):
+    x = self.vec_elem_names.index(name) # initially, lookup by name,
+    f = v[x]
+    return f
 
   # helper: set named vector element from float
   def setNamedVecElemFloat(self, v, name,f):
@@ -625,7 +630,7 @@ class OPL3:
     self._sample_overflow = 0
     self._output = bytes()
 
-    
+
     if isinstance(cfg, dict):  # if config is an old-style opl reg dict
       rf = self.initRegFile()
       keys = list(cfg.keys())
@@ -638,14 +643,14 @@ class OPL3:
       try:
         rf = self.vToRf(cfg)
       except Exception as e:
-        print(e,cfg)
+        print(f'renderOPLFrame() Exception 0: {e} {cfg}')
         exit()
       self._writeRegFile(rf)         
     elif isinstance(cfg,list):  # float32[] cfg vector
       try:
         rf = self.vToRf(cfg)
       except Exception as e:
-        print(e,cfg)
+        print(f'renderOPLFrame() Exception 1: {e} {cfg}')
         exit()
       self._writeRegFile(rf)   
     else:
@@ -680,7 +685,8 @@ class OPL3:
     wave, testspect = self.renderOPLFrame(opl_cfg_vect)
     if testspect is None:
       return 9999999999.9, None
-    return np.mean((spectrum - testspect) ** 2), testspect
+    olddif = np.mean((spectrum - testspect) ** 2)
+    return olddif, testspect
 ###############################################################################
 # ENTRYPOINT
 ###############################################################################
