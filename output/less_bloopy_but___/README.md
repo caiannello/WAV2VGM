@@ -10,6 +10,6 @@ overlaid with the synthesized spectra in red. These graphs can
 be scrolled through using the arrow keys. 
 
 (The actual VGM file is made/played by pressing P while in this 
-mode.)
+mode. It is output to the regular output folder.)
 
 
