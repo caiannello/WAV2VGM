@@ -100,7 +100,10 @@ following (lowercase) keys:
 
   a - Analyze the spectrum and show frequency peaks.
 
-  Or close the window to quit.
+  Clicking on the displayed spectrogram sets some cursors, but these don't yet 
+  do anything, and might even crash the app! (Still kinda fun to play with.)
+
+  Or, close the window to quit.
 
   EXPERIMENTAL STUFF -   (WORK-IN-PROGRESS)
 
@@ -125,9 +128,6 @@ following (lowercase) keys:
       sounds WAY less bloopy than the one using the F key. It's nearly
       perfect! ...except it's pretty quiet, and there's this weird 
       crackling sound?? 
-
-  Clicking on the displayed spectrogram sets some cursors, but these don't yet 
-  do anything, and might even crash the app! (Still kinda fun to play with.)
 
 ```
 
