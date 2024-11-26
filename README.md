@@ -9,15 +9,6 @@ an VGM file that uses OPL3 synthesis to recreate the original sound.
 Examples are provided demonstrating famous speeches as well as a 
 conversion of a classic arcade tune from YM2151 (OPM) to YMF262M! (OPL3)
 
-- NEWS! - 2024-11-14
-
-I found a really crappy bug today that was throwing away HALF of the
-available synth channels and corrupting the remaining ones! She's 
-sounding a lot better now, so I had to update all the examples. 
-The AI experiments are still underway, and training is going better. 
-(I think that bug as confusing the neural network, too.) I'm hopeful
-we'll see some 2-op and 4-op goodness pretty soon!
-
 Directory Content:
   
   doc -                 Currently just some screenshots
@@ -114,16 +105,26 @@ following (lowercase) keys:
   EXPERIMENTAL STUFF -   (WORK-IN-PROGRESS)
 
   n - Tries to make a VGM using the convolutional neural-network model at
-      'models/torch_model.pth'
+      'models/torch_model.pth'  (Not working well at all)
 
   g - Tries to make a VGM using the slow-as-heck genetic algorithm! The
       initial population is completely randomized. Super slowwwww.
+      (Also not working well at all.)
 
   b - Brute force. This uses the original basic additive synthesis method
       to generate the initial spectra, but then the genetic algo gets a
       crack at it and starts making several changes which improve the
       fit. (Super slow, but I'm anxious to get through a whole conversion
-      and hear this, because the graphs look exciting!)
+      and hear this, because the graphs look exciting!) UPDATE: Sounds 
+      terrible! Just because the spectrum looks neat doesnt mean it's 
+      gonna sound right!
+
+  m - Manual mode.. currently just applies the original method and lets
+      you view the per-frame results using left/right arrow keys,
+      or press P to make a VGM and play it. For some reason, this one
+      sounds WAY less bloopy than the one using the F key. It's nearly
+      perfect! ...except it's pretty quiet, and there's this weird 
+      crackling sound?? 
 
   Clicking on the displayed spectrogram sets some cursors, but these don't yet 
   do anything, and might even crash the app! (Still kinda fun to play with.)
@@ -132,6 +133,17 @@ following (lowercase) keys:
 
 ```
 CHANGELOG:
+
+2024-11-25: Added 'manual mode' with what would be a greatly improved 
+            sound, except for the weird crackle. What the heck?
+            I put some example VGM's in this subfolder:
+            'output/less_bloopy_but___'  ...hopefully will find the 
+            cause of the crackle sometime.
+
+            AI Notes: I'm going to give up on the AI for a while..
+            What's a good loss function for a bank of registers where
+            several parts (channels) are completely interchangable? 
+            My head hurts. AI gurus, please help.
 
 2024-11-16: Massive code cleanups and speedups. 
 2024-11-15: Some AI Improvement
