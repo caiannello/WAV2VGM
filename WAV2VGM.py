@@ -102,12 +102,12 @@ if len(sys.argv)==2:
 else:
   # default input file during dev, if no file specified on the commandline.
   wavname = infolder
-  #wavname += 'HAL 9000 - Human Error.wav'
+  wavname += 'HAL 9000 - Human Error.wav'
   #wavname += 'Grand Piano.wav'  
   #wavname += 'JFK Inaguration.wav'
   #wavname += 'Ghouls and Ghosts - The Village Of Decay.wav'
   #wavname += 'Portal-Still Alive.wav'
-  wavname += 'Amiga-Leander-Intro.wav'
+  #wavname += 'Amiga-Leander-Intro.wav'
 
 output_vgm_name = outfolder+os.path.basename(wavname[0:-3])+"vgz"
 temp_regfile_name = tmpfolder+os.path.basename(wavname[0:-3])+'bin'
