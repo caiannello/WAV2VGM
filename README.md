@@ -6,6 +6,9 @@ OPL3 (YMF262) FM synthesizer -- exportable as a standard VGM file playable
 on real hardware or any VGM player. 
 This is a rewrite of the original python3/pygame experiment that was featured on Hackaday, which is still available as release v1.0. The python version is way messier, has broken features, and lacks a proper UI, but it still might be better for casual hacking. Geek on!
 
+## Example Output 
+The input folder has some example input WAV files, and the output folder has the VGM-format approximations. 
+
 ## Gallery
 ### Original WAV
 ![Original WAV](images/orig_wav.png)
