@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "windows",
+      "displayName": "MSVC + vcpkg",
+      "description": "Run from 'Developer PowerShell for VS' (2022 or later) so cl.exe/vcvars are on PATH. Needs the VCPKG_ROOT environment variable set to a vcpkg checkout (the one bundled with Visual Studio's 'Desktop development with C++' workload works: <VS install path>\\VC\\vcpkg).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows"
+    }
+  ]
+}

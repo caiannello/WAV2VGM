@@ -1,194 +1,148 @@
-## Introduction
---------------------------------------------------------------------------------
-```
-WELCOME TO THE WAV2VGM PROJECT !!!
+# WAV2VGM
 
-This (messy) utility for Python 3 takes an input WAV file and outputs it as
-an VGM file that uses OPL3 synthesis to recreate the original sound.  
+A portable C++ GUI app that imports audio, normalizes it to mono 44.1 kHz,
+and approximates it using real synth-chip register settings -- currently an
+OPL3 (YMF262) FM synthesizer -- exportable as a standard VGM file playable
+on real hardware or any VGM player.
 
-Examples are provided demonstrating famous speeches as well as a 
-conversion of a classic arcade tune from YM2151 (OPM) to YMF262M! (OPL3)
+## Stack
 
-Directory Content:
-  
-  doc -                 Currently just some screenshots
-  input -               Some same wave files to use as input
-  output -              Those waves, converted to OPL3, as VGM and MP3 file
-  training_sets -       Large files for training AI models
-  models -              AI Models created using the above data
-  src -                 Misc. source code, training set generator, and
-                        trainer for the convolutional neural-network.
+- CMake + Ninja
+- wxWidgets 3.2+
+- Cross-platform desktop UI using wxWidgets
 
-  WAV2VGM.py -          Main executable
+## Features
 
-```
-## Sample Output
+- Main window with File menu: Import WAV, Exit
+- Child project windows (MDI) with one tab per analysis mode -- "OPL3"
+  (selected by default) and "Peak Trends" -- each holding its own
+  scrollable/zoomable spectrogram view locked to that mode, plus that
+  mode's own controls row directly above it. Selecting a tab selects the
+  mode; there's no separate menu for it.
+- Import a WAV file: downmix to mono, resample to 44.1 kHz (with an
+  anti-aliasing/anti-imaging lowpass filter), amplitude-normalize, and
+  build a real STFT spectrogram (parallelized across hardware threads --
+  the default 32-sample hop means hundreds of thousands of FFT columns
+  for a several-minute recording) mapped through a fixed 5-stop dBFS
+  heatmap gradient (black/blue/red/yellow/white)
+- **OPL3 mode**: fits up to 18 real OPL3 channels' worth of pure-sine
+  oscillators against the recording (two side-by-side fitting workflows,
+  picked via a radio box -- see `oplfit::FitChannelsInTurn` and
+  `oplfit::FitChannelsPerFrame`), renders the result back through a
+  vendored OPL3 emulator for playback/comparison, and exports a
+  standard VGM file
+- **Peak Trends mode**: tracks spectral peaks into persistent trend lines
+  across the recording (additive sine-partial view of the signal) --
+  currently more of a groundwork placeholder than a full workflow of its
+  own
+- Time-axis zoom/scroll stays in sync across tabs; each tab keeps its own
+  independent vertical (Hz) range
+- Settings (last-used import/export folders, spectrogram FFT/hop size)
+  persist between runs in `WAV2VGM.ini` next to the executable
 
-The sound files from the input/ directory have been converted and are provided in the output/ directory as VGM files and MP3 files. These can be played using WINAMP, VGMPLAY, a REAL OPL3 CHIP, etc.:
+## Build on Linux
 
-[JFK Inaguration Clip](https://github.com/caiannello/WAV2VGM/raw/refs/heads/main/output/JFK%20Inaguration.mp3)
+1. Install wxWidgets 3.2 development packages.
+   - Ubuntu/Debian: `sudo apt install libwxgtk3.2-dev`
+2. Configure and build:
+   - `cmake -S . -B build`
+   - `cmake --build build`
 
-[HAL 9000 - Human Error](https://github.com/caiannello/WAV2VGM/raw/refs/heads/main/output/HAL%209000%20-%20Human%20Error.mp3)
+## Build on Windows
 
-[Ghouls and Ghosts - The Village of Decay](https://github.com/caiannello/WAV2VGM/raw/refs/heads/main/output/Ghouls%20and%20Ghosts%20-%20The%20Village%20Of%20Decay.mp3)
+The toolchain is **MSVC + vcpkg** — it's what most Windows C++ developers
+already have, needs nothing beyond a standard Visual Studio install, and
+every piece of the build shares one runtime (no GCC/MSVC-runtime ABI
+matching to worry about).
 
-[Portal - Still Alive](https://github.com/caiannello/WAV2VGM/raw/refs/heads/main/output/Portal-Still%20Alive.mp3)
+1. Install **Visual Studio 2022 or later** (Community edition is fine) with
+   the **"Desktop development with C++"** workload. That workload bundles
+   everything needed — the MSVC compiler, CMake, Ninja, and vcpkg — with
+   no separate downloads.
+2. Open **"Developer PowerShell for VS 2022"** (or 2026, etc. — a Start
+   Menu shortcut the installer creates) and set `VCPKG_ROOT` to the
+   vcpkg bundled with your VS install, e.g.:
+   ```
+   $env:VCPKG_ROOT = "C:\Program Files\Microsoft Visual Studio\<version>\Community\VC\vcpkg"
+   ```
+   (Set this once per shell session — or add it to your profile/environment
+   permanently. If you'd rather manage vcpkg yourself, any vcpkg checkout
+   with `bootstrap-vcpkg.bat` already run works the same way.)
+3. From the repo root:
+   - `cmake --preset windows`
+   - `cmake --build --preset windows-debug`
+4. Run `build/WAV2VGM.exe`.
 
-## Gallery
+The first configure builds wxWidgets and its dependencies from source via
+vcpkg (a few minutes); after that they're cached and later configures are
+fast. vcpkg also copies the required runtime DLLs next to the executable
+automatically (`VCPKG_APPLOCAL_DEPS`), so `build/` stays portable — copy
+it elsewhere and it still runs.
 
-Spectrogram view of a song: "Ghouls and Ghosts - The Village of Decay" 
-![gg](https://raw.githubusercontent.com/caiannello/WAV2VGM/main/doc/WAV2VGM%20-%20Spectrogram%20-%20Ghouls.png)
+### Running the tests
 
-Peak Detection view of a speech sample
-![gg](https://raw.githubusercontent.com/caiannello/WAV2VGM/main/doc/peak_detect_jfk.png)
+- `dsp_selftest` validates the FFT/window/dBFS pipeline against a synthetic
+  sine wave (checks peak-bin position, ~0 dBFS at full scale, and the
+  5-stop color gradient). Run it directly (`build/dsp_selftest.exe`) or via
+  `ctest` from the build directory.
+- `opl3_selftest` validates the `OplChip` wrapper around the vendored OPL3
+  emulator by writing a single-channel patch, rendering it, and checking
+  the FFT's peak bin lands on the frequency the F-number/block registers
+  were set for; checks the per-frame fitter (`FitAllFrames`/
+  `RenderAllFrames`, a deterministic pure-sine fit with no search --
+  additive-mode carrier, modulator fully silenced and disconnected,
+  frequency/level read directly off the target spectrum) against a
+  two-tone-in-sequence input, confirming the expected frame count, a
+  non-silent render, and that consecutive frames within each sustained
+  tone reuse an identical timbre; checks residual targeting (a second
+  `FitAllFrames` call against a two-simultaneous-tone input, given the
+  first channel's own render as `previousMixRendered`), confirming the
+  two-channel mix is meaningfully louder than the first channel alone --
+  i.e. the second channel is actually picking up the tone the first one
+  didn't cover, not redundantly re-fitting the same one -- and, on a
+  single-tone input, that a second channel fit against the first one's
+  residual stays silent rather than re-approximating the only tone that
+  exists; checks the "Make OPL3" button's combined multi-channel workflow
+  (`FitChannelsInTurn`), confirming it stops within the requested channel
+  count and that its incrementally-summed mix (each new channel's own
+  solo render added into a running total) matches `RenderAllFramesMix`'s
+  real joint simulation of the same channels almost exactly, verifying
+  against the real emulator that the additive-superposition assumption
+  behind that optimization actually holds; checks VGM export
+  (`vgm::WriteVgmFile`) by writing a two-channel fit out and reading the
+  raw bytes back, confirming the header fields a real player/hardware
+  would rely on (magic, EOF offset, a resolvable data offset, a nonzero
+  YMF262 clock) and that the data block contains register writes and ends
+  with the proper terminator; does the same end-to-end check for the
+  earlier whole-recording single-channel fitter (`FitSingleChannel`,
+  which still does search FM modulator settings and operator waveforms,
+  kept working but not currently wired into the UI); and checks the
+  earlier whole-recording multi-channel path (`FitMultiChannel`/
+  `RenderMix`, also kept working but not currently wired into the UI)
+  against a two-tone input, confirming it splits the tones across at
+  least two channels and that the combined mix is non-silent.
 
-## Installation
+## Third-party components / licensing
 
-This utility requires Python 3.8+ to be installed, as well as the package manager, python3-pip. There are additional dependencies, listed in requirements.txt, which can be be installed from the command-line in Windows, Linux, or Mac by doing something similar to the following:
+This project vendors [`dbopl`](https://github.com/rofl0r/dbopl)
+(`src/third_party/dbopl/`), the OPL3 (YMF262) emulator core extracted
+from [DOSBox](https://www.dosbox.com/), copyright (C) 2002-2020 The
+DOSBox Team, used unmodified to power the "OPL3" analysis mode. It is
+licensed under **GPL2+** (full text in `LICENSE-GPL2.txt`). Because it's
+statically linked into the executable, **any distributed build with the
+OPL3 analysis mode compiled in is a combined work under GPL2+ as a
+whole** — see `NOTICE.md` for details.
 
-### Windows:
-```
-pip install numpy pygame scipy PyOPL torch
-```
+## Notes / known limitations
 
-### Linux, Mac:
-```
-sudo pip install numpy pygame scipy PyOPL torch
-```
-
-## Advanced Installation
-
-If you want to experiment with training the AI stuff yourself, there are more appropriate versions of torch (pytorch) to install, for example, ones that leverage your system's GPU. Your steps will vary, but in my case, it was from a Windows admin command prompt:
-
-```
-pip install numpy pygame scipy matplotlib PyOPL torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-```
-
-
-## Usage
-
-Input files must be 16-bit WAV files, MONO, with a 44.1 kHz samplerate. 
-
-Examples of starting the utility from the command-line:
-
-### Windows:
-```
-cd WAV2VGM
-python WAV2VGM.py "input\JFK Inaguration.wav"
-```
-
-### Linux, Mac:
-```
-cd WAV2VGM
-./WAV2VGM.py "input/JFK Inaguration.wav"
-```
-
-## Keyboard Commands
-
-If all is well, after some time, a window should appear which displays a spectrogram of 
-the input sound. From here, a few different commands can be issued by pressing the 
-following (lowercase) keys:
-
-```
-  p - Play original sound (Currently, program is unresponsive during playback)
-
-  f - Analyzes the sound simply, and outputs a VGM file to the 'output/'
-      directory. Also, plays a rendition of the output. (The program will
-      be unresponsive during playback.)
-
-      (Output file can be played using WINAMP, VGMPLAY, or a real YMF262M!)
-
-  a - Analyze the spectrum and show frequency peaks.
-
-  Clicking on the displayed spectrogram sets some cursors, but these don't yet 
-  do anything, and might even crash the app! (Still kinda fun to play with.)
-
-  Or, close the window to quit.
-
-  EXPERIMENTAL STUFF -   (WORK-IN-PROGRESS)
-
-  n - Tries to make a VGM using the convolutional neural-network model at
-      'models/torch_model.pth'  (Not working well at all)
-
-  g - Tries to make a VGM using the slow-as-heck genetic algorithm! The
-      initial population is completely randomized. Super slowwwww.
-      (Also not working well at all.)
-
-  b - Brute force. This uses the original basic additive synthesis method
-      to generate the initial spectra, but then the genetic algo gets a
-      crack at it and starts making several changes which improve the
-      fit. (Super slow, but I'm anxious to get through a whole conversion
-      and hear this, because the graphs look exciting!) UPDATE: Sounds 
-      terrible! Just because the spectrum looks neat doesnt mean it's 
-      gonna sound right!
-
-  m - Manual mode.. currently just applies the original method and lets
-      you view the per-frame results using left/right arrow keys,
-      or press P to make a VGM and play it. For some reason, this one
-      sounds WAY less bloopy than the one using the F key. It's nearly
-      perfect! ...except it's pretty quiet, and there's this weird 
-      crackling sound?? 
-
-```
-
-```
-CHANGELOG:
-
-2024-11-25: Added 'manual mode' with what would be a greatly improved 
-            sound, except for the weird crackle. What the heck?
-            I put some example VGM's in this subfolder:
-            'output/less_bloopy_but___'  ...hopefully will find the 
-            cause of the crackle sometime.
-
-            AI Notes: I'm going to give up on the AI for a while..
-            What's a good loss function for a bank of registers where
-            several parts (channels) are completely interchangable? 
-            My head hurts. AI gurus, please help.
-
-2024-11-16: Massive code cleanups and speedups. 
-2024-11-15: Some AI Improvement
-2024-11-14: Greatly improved output sound quality.
-
-```
-
-## Notes
-
-  - The spectrogram is made by slicing the input wave into 4096 byte samples, 
-    with 32-samples of overlap per slice. Each spectrum is 2048-bins spanning a 
-    frequency range of 0Hz to 22050 Hz, at about 10.8 Hz per bin. The frequency
-    range shown on screen scaled up by three though, from 0Hz (bottom) to
-    7350 Hz (top).
-    
-There is much room for improvement in this project:
-
-  - The code is quite disorganized and slow, and the user interface is sparse
-    and unintuitive. 
-
-  - The input file format requirements are too strict. Utility should be able
-    to load files of different types, with different sample rates and channel 
-    counts.
-
-  - There should be some settings to tweak to affect the conversion.
-
-  - The output files are larger than they really need to be. (Redundancy in
-    the instructions sent to the OPL3, e.g. the same frequency being set 
-    repeatedly, even if unchanged)
-
-  - It would be super easy to add OPL2 support, since it's nearly the same
-    except with less channels. (Many of the synthesizers supported by the 
-    VGM file format would be a good fit with this project and should be added.)
-
-  - The quality of the output could be HUGELY BETTER: The re-synthesis method
-    currently only contains pure sine waves (1-operator, basically), rather
-    than any of the more advanced features offered in OPL3 such as 2-op, 4-op,
-    percussion modes, waveforms besides sine, volume envelopes, vibrato, 
-    tremolo, etc.  See below.
-
-  - Work is underway to try to leverage more advanced synthesizer capabilities:
-
-      - The first attempt was a super-slow genetic algorithm that generates
-        some interesting results. 
-
-      - We are also trying to build a neural network to do it! See the READMEs
-        in 'model/' and 'training_sets/' for info about the NN stuff.
-
+- MP3 import is not implemented (out of scope for this pass); the Import
+  dialog only accepts `.wav`.
+- There's no project save/load -- each imported WAV opens a fresh child
+  window and its analysis is derived automatically from it, with nothing
+  interactive enough to be worth persisting between sessions yet.
+- The spectrogram defaults to 4096 samples per column (92ms) with a
+  32-sample (0.072ms) hop between columns. Both are user-editable via
+  `WAV2VGM.ini` (`FftSize`/`HopSize`, next to the executable, created on
+  first run) rather than requiring a rebuild -- there's no in-app
+  Preferences screen for them yet. `FftSize` must be a power of two;
+  invalid values in the INI are ignored in favor of the default.
