@@ -3,7 +3,8 @@
 A portable C++ GUI app that imports audio, normalizes it to mono 44.1 kHz,
 and approximates it using real synth-chip register settings -- currently an
 OPL3 (YMF262) FM synthesizer -- exportable as a standard VGM file playable
-on real hardware or any VGM player.
+on real hardware or any VGM player. 
+This is a rewrite of the original python3/pygame experiment that was featured on Hackaday, which is still available as release v1.0. The python version is way messier, has broken features, and lacks a proper UI, but it still might be better for casual hacking. Geek on!
 
 ## Gallery
 ### Original WAV
