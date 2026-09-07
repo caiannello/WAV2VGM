@@ -5,12 +5,12 @@ and approximates it using real synth-chip register settings -- currently an
 OPL3 (YMF262) FM synthesizer -- exportable as a standard VGM file playable
 on real hardware or any VGM player.
 
-## Images
-
+## Gallery
+### Original WAV
 ![Original WAV](images/orig_wav.png)
-
+### OPL3 Approximation
 ![OPL3 Aproximation](images/opl3_aproximation.png)
-
+### Spectral Peak Analysis
 ![Peak Analysis](images/peak_analysis.png)
 
 ## Stack
