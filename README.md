@@ -9,6 +9,14 @@ This is a rewrite of the original python3/pygame experiment that was featured on
 ## Example Output 
 The input folder has some example input WAV files, and the output folder has the VGM-format approximations. 
 
+| Input WAV | Output VGM | Rendered WAV |
+| --- | --- | --- |
+| [Grand Piano](input/Grand%20Piano.wav) | [Grand Piano](output/Grand%20Piano.vgm) | [Listen](output/001_Grand%20Piano_vgm.wav) |
+| [HAL 9000 - Human Error](input/HAL%209000%20-%20Human%20Error.wav) | [HAL 9000 - Human Error](output/HAL%209000%20-%20Human%20Error.vgm) | [Listen](output/002_HAL%209000%20-%20Human%20Error_vgm.wav) |
+| [JFK Inaguration](input/JFK%20Inaguration.wav) | [JFK Inaguration](output/JFK%20Inaguration.vgm) | [Listen](output/003_JFK%20Inaguration_vgm.wav) |
+| [Tamayo Kawamoto and Capcom - Ghouls and Ghosts - The Village Of Decay](input/Tamayo%20Kawamoto%20and%20Capcom%20-%20Ghouls%20and%20Ghosts%20-%20The%20Village%20Of%20Decay.wav) | [Tamayo Kawamoto and Capcom - Ghouls and Ghosts - The Village Of Decay](output/Tamayo%20Kawamoto%20and%20Capcom%20-%20Ghouls%20and%20Ghosts%20-%20The%20Village%20Of%20Decay.vgm) | [Listen](output/004_Tamayo%20Kawamoto%20and%20Capcom%20-%20Ghouls%20and%20Ghosts%20-%20The%20Village%20Of%20Decay_vgm.wav) |
+| [Wilhelm Scream](input/Wilhelm%20Scream.wav) | [Wilhelm Scream](output/Wilhelm%20Scream.vgm) | [Listen](output/005_Wilhelm%20Scream_vgm.wav) |
+
 ## Gallery
 ### Original WAV
 ![Original WAV](images/orig_wav.png)
