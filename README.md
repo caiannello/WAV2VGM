@@ -159,12 +159,13 @@ OPL3 analysis mode compiled in is a combined work under GPL2+ as a
 whole** — see `NOTICE.md` for details.
 
 ## Notes / known limitations
-
+- I'd really really like to take advantage of more output synth features 
+  such as waveform shapes, noise, and OPL 2-op and 4-op sounds. (It's 
+  been difficult to graduate from plain sine-waves.)
+- Hope to support more synthesizer types in the future, such as MOS SID,
+  PSG, etc.
 - MP3 import is not implemented (out of scope for this pass); the Import
   dialog only accepts `.wav`.
-- There's no project save/load -- each imported WAV opens a fresh child
-  window and its analysis is derived automatically from it, with nothing
-  interactive enough to be worth persisting between sessions yet.
 - The spectrogram defaults to 4096 samples per column (92ms) with a
   32-sample (0.072ms) hop between columns. Both are user-editable via
   `WAV2VGM.ini` (`FftSize`/`HopSize`, next to the executable, created on
