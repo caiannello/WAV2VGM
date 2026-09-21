@@ -2,7 +2,8 @@
 
 A portable C++ GUI app that imports audio, normalizes it to mono 44.1 kHz,
 and approximates it using real synth-chip register settings -- currently an
-OPL3 (YMF262) FM synthesizer -- exportable as a standard VGM file playable
+OPL3 (YMF262) FM synthesizer, as a simple additive sum of sine-waves of 
+varying frequencies and volumes-- exportable as a standard VGM file playable
 on real hardware or any VGM player. 
 
 This is a C++ rewrite of the original python3/pygame experiment which was 
@@ -10,6 +11,9 @@ featured on Hackaday, and that version is still available in release v1.0.
 
 The python version is way messier, has broken features, and lacks a proper 
 UI, but it still might be better for casual hacking. Geek on!
+
+Some day want to take advantage of more synth features than just plain
+sine waves! Percussion, square waves, noise channels? But that's hard!
 
 ## Example Output 
 The input folder has some example input WAV files, and the output folder has the VGM-format approximations. 
