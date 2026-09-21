@@ -8,12 +8,11 @@ on real hardware or any VGM player.
 
 This is a C++ rewrite of the original python3/pygame experiment which was 
 featured on Hackaday, and that version is still available in release v1.0. 
-
-The python version is way messier, has broken features, and lacks a proper 
+The Python version is way messier, has broken features, and lacks a proper 
 UI, but it still might be better for casual hacking. Geek on!
 
-Some day want to take advantage of more synth features than just plain
-sine waves! Percussion, square waves, noise channels? But that's hard!
+Some day I hope to take advantage of more synth features than just the plain
+sine waves! Percussion, square waves, noise channels.. but that's been hard.
 
 ## Example Output 
 The input folder has some example input WAV files, and the output folder has the VGM-format approximations. 
