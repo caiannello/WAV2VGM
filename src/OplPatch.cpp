@@ -28,7 +28,7 @@ void Resolve(int channelIndex, int& bank, uint8_t& modBase, uint8_t& carBase, ui
 
 } // namespace
 
-void SetupChannel(OplChip& chip, int channelIndex, const ChannelStaticSetup& setup)
+void SetupChannel(const RegWriteFn& write, int channelIndex, const ChannelStaticSetup& setup)
 {
     int bank = 0;
     uint8_t modBase = 0, carBase = 0, chanReg = 0;
@@ -38,36 +38,48 @@ void SetupChannel(OplChip& chip, int channelIndex, const ChannelStaticSetup& set
     // OFF -- see the comment on ChannelStaticSetup.
     constexpr uint8_t kSustainFlag = 0x20;
 
-    chip.WriteReg(bank, static_cast<uint8_t>(0x20 + modBase),
-                  static_cast<uint8_t>(kSustainFlag | (setup.modMultipleIndex & 0x0F)));
-    chip.WriteReg(bank, static_cast<uint8_t>(0x40 + modBase), static_cast<uint8_t>(setup.modTotalLevel & 0x3F));
-    chip.WriteReg(bank, static_cast<uint8_t>(0x60 + modBase), 0xFF); // attack=15 (fastest), decay=15
-    chip.WriteReg(bank, static_cast<uint8_t>(0x80 + modBase), 0x0F); // sustain level=0 (max), release=15
-    chip.WriteReg(bank, static_cast<uint8_t>(0xE0 + modBase), static_cast<uint8_t>(setup.modWaveform & 0x07));
+    write(bank, static_cast<uint8_t>(0x20 + modBase),
+          static_cast<uint8_t>(kSustainFlag | (setup.modMultipleIndex & 0x0F)));
+    write(bank, static_cast<uint8_t>(0x40 + modBase), static_cast<uint8_t>(setup.modTotalLevel & 0x3F));
+    write(bank, static_cast<uint8_t>(0x60 + modBase), 0xFF); // attack=15 (fastest), decay=15
+    write(bank, static_cast<uint8_t>(0x80 + modBase), 0x0F); // sustain level=0 (max), release=15
+    write(bank, static_cast<uint8_t>(0xE0 + modBase), static_cast<uint8_t>(setup.modWaveform & 0x07));
 
-    chip.WriteReg(bank, static_cast<uint8_t>(0x20 + carBase),
-                  static_cast<uint8_t>(kSustainFlag | (setup.carMultipleIndex & 0x0F)));
-    chip.WriteReg(bank, static_cast<uint8_t>(0x60 + carBase), 0xF0); // attack=15, decay=0 (never leaves the peak on its own)
-    chip.WriteReg(bank, static_cast<uint8_t>(0x80 + carBase), 0x0F);
-    chip.WriteReg(bank, static_cast<uint8_t>(0xE0 + carBase), static_cast<uint8_t>(setup.carWaveform & 0x07));
+    write(bank, static_cast<uint8_t>(0x20 + carBase),
+          static_cast<uint8_t>(kSustainFlag | (setup.carMultipleIndex & 0x0F)));
+    write(bank, static_cast<uint8_t>(0x60 + carBase), 0xF0); // attack=15, decay=0 (never leaves the peak on its own)
+    write(bank, static_cast<uint8_t>(0x80 + carBase), 0x0F);
+    write(bank, static_cast<uint8_t>(0xE0 + carBase), static_cast<uint8_t>(setup.carWaveform & 0x07));
 
     constexpr uint8_t kPanBothOn = 0x30;
     const uint8_t algorithmBit = setup.algorithmAdditive ? 0x01 : 0x00; // CNT: 0=FM, 1=additive (see ChannelStaticSetup)
-    chip.WriteReg(bank, static_cast<uint8_t>(0xC0 + chanReg),
-                  static_cast<uint8_t>(kPanBothOn | ((setup.feedback & 0x07) << 1) | algorithmBit));
+    write(bank, static_cast<uint8_t>(0xC0 + chanReg),
+          static_cast<uint8_t>(kPanBothOn | ((setup.feedback & 0x07) << 1) | algorithmBit));
 }
 
-void ApplyFrame(OplChip& chip, int channelIndex, const FramePatch& frame)
+void ApplyFrame(const RegWriteFn& write, int channelIndex, const FramePatch& frame)
 {
     int bank = 0;
     uint8_t modBase = 0, carBase = 0, chanReg = 0;
     Resolve(channelIndex, bank, modBase, carBase, chanReg);
 
-    chip.WriteReg(bank, static_cast<uint8_t>(0x40 + carBase), static_cast<uint8_t>(frame.carTotalLevel & 0x3F));
-    chip.WriteReg(bank, static_cast<uint8_t>(0xA0 + chanReg), static_cast<uint8_t>(frame.fnum & 0xFF));
+    write(bank, static_cast<uint8_t>(0x40 + carBase), static_cast<uint8_t>(frame.carTotalLevel & 0x3F));
+    write(bank, static_cast<uint8_t>(0xA0 + chanReg), static_cast<uint8_t>(frame.fnum & 0xFF));
     const uint8_t keyOnBit = frame.keyOn ? 0x20 : 0x00;
-    chip.WriteReg(bank, static_cast<uint8_t>(0xB0 + chanReg),
-                  static_cast<uint8_t>(keyOnBit | ((frame.block & 0x07) << 2) | ((frame.fnum >> 8) & 0x03)));
+    write(bank, static_cast<uint8_t>(0xB0 + chanReg),
+          static_cast<uint8_t>(keyOnBit | ((frame.block & 0x07) << 2) | ((frame.fnum >> 8) & 0x03)));
+}
+
+void SetupChannel(OplChip& chip, int channelIndex, const ChannelStaticSetup& setup)
+{
+    SetupChannel([&chip](int bank, uint8_t reg, uint8_t value) { chip.WriteReg(bank, reg, value); },
+                 channelIndex, setup);
+}
+
+void ApplyFrame(OplChip& chip, int channelIndex, const FramePatch& frame)
+{
+    ApplyFrame([&chip](int bank, uint8_t reg, uint8_t value) { chip.WriteReg(bank, reg, value); },
+               channelIndex, frame);
 }
 
 } // namespace opl

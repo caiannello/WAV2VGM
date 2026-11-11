@@ -4,8 +4,9 @@
 #include "Dsp.h"
 #include "PeakAnalysis.h"
 #include "OplFit.h"
+#include "SineFit.h"
 #include "WavWriter.h"
-#include "VgmWriter.h"
+#include "ChipVgmWriter.h"
 #include "AppSettings.h"
 
 #include <wx/sizer.h>
@@ -15,12 +16,51 @@
 #include <wx/stattext.h>
 #include <wx/button.h>
 #include <wx/radiobox.h>
+#include <wx/choice.h>
 #include <wx/sound.h>
 #include <wx/stdpaths.h>
 #include <wx/filefn.h>
 #include <wx/filedlg.h>
 #include <algorithm>
+#include <iterator>
 #include <thread>
+
+namespace
+{
+
+// The Chip tab's dropdown. OPL4's entry is refined by the separate OPL4
+// mode dropdown (see kOpl4Modes); its id here is just a placeholder.
+struct ChipChoice
+{
+    const char* label;
+    chips::ChipId id;
+};
+constexpr ChipChoice kChipChoices[] = {
+    {"OPL3 (YMF262)", chips::ChipId::Opl3},
+    {"OPL2 (YM3812)", chips::ChipId::Opl2},
+    {"OPL4 (YMF278B)", chips::ChipId::Opl4Fm},
+    {"OPM (YM2151)", chips::ChipId::Opm},
+    {"OPN (YM2203)", chips::ChipId::Opn},
+    {"OPNA (YM2608)", chips::ChipId::Opna},
+    {"OPN2 (YM2612)", chips::ChipId::Opn2},
+    {"HuC6280", chips::ChipId::HuC6280},
+    {"VSU (Virtual Boy)", chips::ChipId::Vsu},
+    {"MultiPCM (YMW258)", chips::ChipId::MultiPcm},
+};
+constexpr int kOpl4ChoiceIndex = 2;
+
+struct Opl4Mode
+{
+    const char* label;
+    chips::ChipId id;
+};
+constexpr Opl4Mode kOpl4Modes[] = {
+    {"FM (18)", chips::ChipId::Opl4Fm},
+    {"PCM (24)", chips::ChipId::Opl4Pcm},
+    {"FM + PCM (42)", chips::ChipId::Opl4Both},
+};
+
+} // namespace
 
 ProjectWindow::ProjectWindow(wxMDIParentFrame* parent)
     : wxMDIChildFrame(parent, wxID_ANY, "Project")
@@ -72,12 +112,30 @@ void ProjectWindow::SetupUi()
 {
     m_notebook = new wxNotebook(this, wxID_ANY);
 
-    // --- "OPL3" tab: page 0, selected by default (see RefreshViews) ---
+    // --- "Chip" tab: page 0, selected by default (see RefreshViews) ---
     wxPanel* opl3Page = new wxPanel(m_notebook);
     wxBoxSizer* opl3PageSizer = new wxBoxSizer(wxVERTICAL);
 
     m_opl3ControlsPanel = new wxPanel(opl3Page);
     wxBoxSizer* opl3Sizer = new wxBoxSizer(wxHORIZONTAL);
+
+    opl3Sizer->Add(new wxStaticText(m_opl3ControlsPanel, wxID_ANY, "Chip:"), 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
+    wxArrayString chipLabels;
+    for (const ChipChoice& c : kChipChoices)
+        chipLabels.Add(c.label);
+    m_chipChoice = new wxChoice(m_opl3ControlsPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, chipLabels);
+    opl3Sizer->Add(m_chipChoice, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
+
+    wxArrayString opl4Labels;
+    for (const Opl4Mode& m : kOpl4Modes)
+        opl4Labels.Add(m.label);
+    m_opl4ModeChoice = new wxChoice(m_opl3ControlsPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, opl4Labels);
+    opl3Sizer->Add(m_opl4ModeChoice, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
+
+    const settings::AppSettings& saved = settings::Get();
+    m_chipChoice->SetSelection(std::clamp(saved.targetChip, 0, static_cast<int>(std::size(kChipChoices)) - 1));
+    m_opl4ModeChoice->SetSelection(std::clamp(saved.opl4Mode, 0, static_cast<int>(std::size(kOpl4Modes)) - 1));
+
     opl3Sizer->Add(new wxStaticText(m_opl3ControlsPanel, wxID_ANY, "Frame rate (Hz):"),
                     0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
     m_opl3FrameRateSpin = new wxSpinCtrl(m_opl3ControlsPanel, wxID_ANY, wxEmptyString,
@@ -109,11 +167,11 @@ void ProjectWindow::SetupUi()
 
     // Fits up to Max channels channels against the whole recording, using
     // whichever workflow the radio box above selects (see
-    // oplfit::FitChannelsInTurn / oplfit::FitChannelsPerFrame).
-    wxButton* startButton = new wxButton(m_opl3ControlsPanel, wxID_ANY, "Make OPL3");
+    // sinefit::FitChannelsInTurn / sinefit::FitChannelsPerFrame).
+    wxButton* startButton = new wxButton(m_opl3ControlsPanel, wxID_ANY, "Make");
     opl3Sizer->Add(startButton, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
 
-    m_opl3PlayButton = new wxButton(m_opl3ControlsPanel, wxID_ANY, "Play OPL3");
+    m_opl3PlayButton = new wxButton(m_opl3ControlsPanel, wxID_ANY, "Play");
     opl3Sizer->Add(m_opl3PlayButton, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
 
     wxButton* exportVgmButton = new wxButton(m_opl3ControlsPanel, wxID_ANY, "Export VGM...");
@@ -126,6 +184,8 @@ void ProjectWindow::SetupUi()
     opl3Sizer->Add(m_opl3VisibilityRadio, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
 
     m_opl3ControlsPanel->SetSizer(opl3Sizer);
+    m_chipChoice->Bind(wxEVT_CHOICE, &ProjectWindow::OnChipChanged, this);
+    m_opl4ModeChoice->Bind(wxEVT_CHOICE, &ProjectWindow::OnChipChanged, this);
     m_opl3VisibilityRadio->Bind(wxEVT_RADIOBOX, &ProjectWindow::OnOpl3VisibilityChanged, this);
     startButton->Bind(wxEVT_BUTTON, &ProjectWindow::OnOpl3Start, this);
     m_opl3PlayButton->Bind(wxEVT_BUTTON, &ProjectWindow::OnOpl3PlayToggle, this);
@@ -133,17 +193,12 @@ void ProjectWindow::SetupUi()
 
     m_opl3View = new SpectrogramView(opl3Page);
     m_opl3View->SetAnalysisMode(SpectrogramView::AnalysisMode::Opl3);
-    // Most of what's actually reproducible sits under OPL3's own ~6.2kHz
-    // ceiling (see oplfit's kOplMaxFreqHz) -- default the view there
-    // (with a little headroom) rather than the full spectrogram range,
-    // without preventing the user from zooming/scrolling out further
-    // afterward (SetVRangeHz only sets a starting point).
-    m_opl3View->SetVRangeHz(0.0, 8192.0);
 
     opl3PageSizer->Add(m_opl3ControlsPanel, 0, wxEXPAND);
     opl3PageSizer->Add(m_opl3View, 1, wxEXPAND);
     opl3Page->SetSizer(opl3PageSizer);
-    m_notebook->AddPage(opl3Page, "OPL3");
+    m_notebook->AddPage(opl3Page, "Chip");
+    ApplyChipSelection();
 
     // --- "Peak Trends" tab: page 1 ---
     wxPanel* peakPage = new wxPanel(m_notebook);
@@ -215,23 +270,65 @@ void ProjectWindow::RefreshViews()
     m_peaksComputedAtAnalysisRate = -1.0;
     m_peaksComputedAtMaxPeaks = -1;
     m_peaksComputedAtWindowHalfWidth = -1;
-    m_opl3Channels.clear();
+    m_chipFit = sinefit::ChipFit{};
     m_opl3CumulativeRendered.clear();
 
     const double secondsPerColumn = static_cast<double>(dsp::kHopSize) / std::max(1, m_project.SampleRate());
     m_opl3View->SetImageData(m_project.SpectrogramWidth(), m_project.SpectrogramHeight(),
                               m_project.SpectrogramRGB(), secondsPerColumn, m_project.SampleRate());
     // SetImageData resets the vertical range to full-scale for every view
-    // (new data invalidates any previous framing) -- re-apply OPL3's own
-    // default (see the identical call/reasoning in SetupUi) now that
-    // there's real data to look at.
-    m_opl3View->SetVRangeHz(0.0, 8192.0);
+    // (new data invalidates any previous framing) -- re-apply the chip's
+    // own default now that there's real data to look at.
+    ApplyChipVRange();
     m_opl3View->SetZoomAndScroll(m_sharedZoom, m_sharedScrollSeconds);
     m_peakTrendsView->SetImageData(m_project.SpectrogramWidth(), m_project.SpectrogramHeight(),
                                     m_project.SpectrogramRGB(), secondsPerColumn, m_project.SampleRate());
     m_peakTrendsView->SetZoomAndScroll(m_sharedZoom, m_sharedScrollSeconds);
 
-    m_notebook->SetSelection(0); // OPL3 -- the default tab for a freshly-imported file
+    m_notebook->SetSelection(0); // Chip -- the default tab for a freshly-imported file
+}
+
+chips::ChipId ProjectWindow::SelectedChipId() const
+{
+    const int chip = std::clamp(m_chipChoice->GetSelection(), 0, static_cast<int>(std::size(kChipChoices)) - 1);
+    if (chip == kOpl4ChoiceIndex)
+    {
+        const int mode = std::clamp(m_opl4ModeChoice->GetSelection(), 0, static_cast<int>(std::size(kOpl4Modes)) - 1);
+        return kOpl4Modes[mode].id;
+    }
+    return kChipChoices[chip].id;
+}
+
+void ProjectWindow::ApplyChipSelection()
+{
+    m_opl4ModeChoice->Show(m_chipChoice->GetSelection() == kOpl4ChoiceIndex);
+    const auto target = chips::CreateTarget(SelectedChipId());
+    const int voices = target ? target->VoiceCount() : 1;
+    m_opl3MaxChannelsSpin->SetRange(1, voices);
+    m_opl3MaxChannelsSpin->SetValue(voices); // every real voice by default
+    m_opl3ControlsPanel->Layout();
+    ApplyChipVRange();
+}
+
+void ProjectWindow::ApplyChipVRange()
+{
+    double topHz = 8192.0;
+    if (const auto target = chips::CreateTarget(SelectedChipId()))
+        for (const chips::VoiceKind& kind : target->Kinds())
+            topHz = std::max(topHz, kind.maxHz * 1.25);
+    const double nyquist = std::max(1, m_project.SampleRate()) / 2.0;
+    if (m_project.SampleRate() > 0)
+        topHz = std::min(topHz, nyquist);
+    m_opl3View->SetVRangeHz(0.0, topHz);
+}
+
+void ProjectWindow::OnChipChanged(wxCommandEvent& WXUNUSED(evt))
+{
+    settings::AppSettings& s = settings::Get();
+    s.targetChip = m_chipChoice->GetSelection();
+    s.opl4Mode = m_opl4ModeChoice->GetSelection();
+    settings::Save();
+    ApplyChipSelection();
 }
 
 void ProjectWindow::OnPageChanging(wxNotebookEvent& evt)
@@ -294,20 +391,23 @@ void ProjectWindow::OnOpl3Start(wxCommandEvent& WXUNUSED(evt))
     const int maxChannels = m_opl3MaxChannelsSpin->GetValue();
 
     // Discards any previous fit and starts fresh, using whichever of
-    // oplfit.h's two side-by-side workflows the radio box selects (see
-    // their doc comments for what actually differs between them).
+    // sinefit.h's two side-by-side workflows the radio box selects (see
+    // oplfit.h's doc comments for what actually differs between them).
     const bool perFrame = m_opl3AlgorithmRadio->GetSelection() == 1;
-    wxProgressDialog progressDlg("Analyzing", "Fitting OPL3 channels...", 100, this,
+    const auto target = chips::CreateTarget(SelectedChipId());
+    if (!target)
+        return;
+    wxProgressDialog progressDlg("Analyzing", "Fitting " + target->Name() + " channels...", 100, this,
                                   wxPD_APP_MODAL | wxPD_AUTO_HIDE | wxPD_ELAPSED_TIME);
     auto progressCallback = [&progressDlg](int percent) { progressDlg.Update(std::clamp(percent, 0, 100)); };
-    oplfit::MultiChannelSineFit fit = perFrame
-        ? oplfit::FitChannelsPerFrame(m_project.Samples(), m_project.SampleRate(), frameRateHz, maxChannels,
-                                       progressCallback)
-        : oplfit::FitChannelsInTurn(m_project.Samples(), m_project.SampleRate(), frameRateHz, maxChannels,
-                                     progressCallback);
+    sinefit::ChipFit fit = perFrame
+        ? sinefit::FitChannelsPerFrame(target, m_project.Samples(), m_project.SampleRate(), frameRateHz, maxChannels,
+                                        progressCallback)
+        : sinefit::FitChannelsInTurn(target, m_project.Samples(), m_project.SampleRate(), frameRateHz, maxChannels,
+                                      progressCallback);
 
-    m_opl3Channels = std::move(fit.channels);
     m_opl3CumulativeRendered = std::move(fit.mixRendered);
+    m_chipFit = std::move(fit);
 
     // Reuses the same progress dialog for this second phase (rebuilding
     // the comparison overlay) rather than letting it close and the app
@@ -326,15 +426,17 @@ void ProjectWindow::OnOpl3Start(wxCommandEvent& WXUNUSED(evt))
 
 void ProjectWindow::OnOpl3ExportVgm(wxCommandEvent& WXUNUSED(evt))
 {
-    if (m_opl3Channels.empty())
+    if (m_chipFit.tracks.empty())
     {
-        wxMessageBox("Press 'Make OPL3' first to build an approximation to export.", "Nothing to export",
+        wxMessageBox("Press 'Make' first to build an approximation to export.", "Nothing to export",
                      wxICON_INFORMATION);
         return;
     }
 
     settings::AppSettings& s = settings::Get();
     const wxString defaultFileName = wxFileName(m_project.SourcePath()).GetName() + ".vgm";
+    // Exports the chip the current fit was made for, even if the dropdown
+    // has since been changed.
     wxFileDialog dlg(this, "Export VGM", s.lastExportDir, defaultFileName,
                       "VGM files (*.vgm)|*.vgm|All files (*.*)|*.*", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
     if (dlg.ShowModal() != wxID_OK)
@@ -344,14 +446,14 @@ void ProjectWindow::OnOpl3ExportVgm(wxCommandEvent& WXUNUSED(evt))
     settings::Save();
 
     std::string err;
-    if (!vgm::WriteVgmFile(dlg.GetPath().ToStdString(), m_opl3Channels, err))
+    if (!vgm::WriteChipVgmFile(dlg.GetPath().ToStdString(), m_chipFit, err))
     {
         wxMessageBox(err, "Export failed", wxICON_ERROR);
         return;
     }
 
     if (wxFrame* frame = dynamic_cast<wxFrame*>(wxGetTopLevelParent(this)))
-        frame->SetStatusText("Exported VGM to " + dlg.GetPath());
+        frame->SetStatusText("Exported " + m_chipFit.target->Name() + " VGM to " + dlg.GetPath());
 }
 
 void ProjectWindow::RefreshOpl3ComparisonOverlay(const dsp::ProgressCallback& progress)
@@ -364,11 +466,11 @@ void ProjectWindow::RefreshOpl3ComparisonOverlay(const dsp::ProgressCallback& pr
     std::vector<std::vector<double>> originalDbfsPerFrame;
     std::vector<std::vector<double>> renderedDbfsPerFrame;
     double frameRateHz = 0.0;
-    if (!m_opl3Channels.empty())
+    if (!m_chipFit.tracks.empty() && m_chipFit.frameRateHz > 0.0)
     {
-        frameRateHz = m_opl3Channels.front().frameRateHz;
+        frameRateHz = m_chipFit.frameRateHz;
         const double frameDurationSeconds = 1.0 / frameRateHz;
-        const size_t frameCount = m_opl3Channels.front().frames.size();
+        const size_t frameCount = m_chipFit.tracks.front().frames.size();
         originalDbfsPerFrame.assign(frameCount, {});
         renderedDbfsPerFrame.assign(frameCount, {});
 
@@ -434,9 +536,9 @@ void ProjectWindow::OnOpl3PlayToggle(wxCommandEvent& WXUNUSED(evt))
         return;
     }
 
-    if (m_opl3Channels.empty())
+    if (m_chipFit.tracks.empty())
     {
-        wxMessageBox("Press 'Make OPL3' first.", "Nothing to play", wxICON_INFORMATION);
+        wxMessageBox("Press 'Make' first.", "Nothing to play", wxICON_INFORMATION);
         return;
     }
     PlayOpl3Preview(m_opl3CumulativeRendered);
@@ -456,7 +558,7 @@ void ProjectWindow::PlayOpl3Preview(const std::vector<float>& samples)
     m_opl3PreviewSound = nullptr;
 
     if (m_opl3PreviewWavPath.empty())
-        m_opl3PreviewWavPath = (wxStandardPaths::Get().GetTempDir() + "/wav2vgm_opl3_preview.wav").ToStdString();
+        m_opl3PreviewWavPath = (wxStandardPaths::Get().GetTempDir() + "/wav2vgm_chip_preview.wav").ToStdString();
 
     std::string err;
     if (!wavwriter::WriteMonoWavFile(m_opl3PreviewWavPath, samples, m_project.SampleRate(), err))
@@ -493,14 +595,14 @@ void ProjectWindow::StopOpl3Playback()
     wxSound::Stop(); // stops whatever's currently playing, not just m_opl3PreviewSound specifically
     m_opl3IsPlaying = false;
     if (m_opl3PlayButton)
-        m_opl3PlayButton->SetLabel("Play OPL3");
+        m_opl3PlayButton->SetLabel("Play");
 }
 
 void ProjectWindow::OnOpl3PlaybackTimer(wxTimerEvent& WXUNUSED(evt))
 {
     m_opl3IsPlaying = false;
     if (m_opl3PlayButton)
-        m_opl3PlayButton->SetLabel("Play OPL3");
+        m_opl3PlayButton->SetLabel("Play");
 }
 
 void ProjectWindow::EnsurePeaksComputed()

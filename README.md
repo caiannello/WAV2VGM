@@ -1,10 +1,25 @@
 # WAV2VGM
 
 A portable C++ GUI app that imports audio, normalizes it to mono 44.1 kHz,
-and approximates it using real synth-chip register settings -- currently an
-OPL3 (YMF262) FM synthesizer, as a simple additive sum of sine-waves of 
-varying frequencies and volumes-- exportable as a standard VGM file playable
-on real hardware or any VGM player. 
+and approximates it using real synth-chip register settings, as a simple
+additive sum of sine-waves of varying frequencies and volumes. The result
+can be exported as a standard VGM file playable on real hardware or any VGM
+player. Supported output chips:
+
+| Chip | Sine voices | How each voice makes a sine |
+| --- | --- | --- |
+| OPL3 (YMF262) | 18 | 2-op channel, additive mode, sine carrier |
+| OPL2 (YM3812) | 9 | same as OPL3, bank 0 only |
+| OPL4 (YMF278B) | 18 FM / 24 PCM / 42 both | FM as OPL3; PCM slots loop a sine sample uploaded to sample RAM |
+| OPM (YM2151) | 8 | algorithm 7, one operator per channel |
+| OPN (YM2203) | 6 | algorithm 7; channel 3 in special mode gives 4 independent operators |
+| OPNA (YM2608) | 9 | as OPN, 6 FM channels |
+| OPN2 (YM2612) | 9 | as OPNA |
+| HuC6280 | 6 | 32-step 5-bit sine wavetable |
+| VSU (Virtual Boy) | 5 | 32-step 6-bit sine wavetable |
+| MultiPCM (YMW258) | 28 | loops a sine sample from a small ROM embedded in the VGM |
+
+Square-wave (SSG), noise, rhythm and ADPCM parts are left silent.
 
 This is a C++ rewrite of the original python3/pygame experiment which was 
 featured on Hackaday, and that version is still available in release v1.0. 
@@ -42,7 +57,7 @@ The input folder has some example input WAV files, and the output folder has the
 ## Features
 
 - Main window with File menu: Import WAV, Exit
-- Child project windows (MDI) with one tab per analysis mode -- "OPL3"
+- Child project windows (MDI) with one tab per analysis mode -- "Chip"
   (selected by default) and "Peak Trends" -- each holding its own
   scrollable/zoomable spectrogram view locked to that mode, plus that
   mode's own controls row directly above it. Selecting a tab selects the
@@ -53,12 +68,17 @@ The input folder has some example input WAV files, and the output folder has the
   the default 32-sample hop means hundreds of thousands of FFT columns
   for a several-minute recording) mapped through a fixed 5-stop dBFS
   heatmap gradient (black/blue/red/yellow/white)
-- **OPL3 mode**: fits up to 18 real OPL3 channels' worth of pure-sine
-  oscillators against the recording (two side-by-side fitting workflows,
-  picked via a radio box -- see `oplfit::FitChannelsInTurn` and
-  `oplfit::FitChannelsPerFrame`), renders the result back through a
-  vendored OPL3 emulator for playback/comparison, and exports a
-  standard VGM file
+- **Chip mode**: pick an output chip from the dropdown (plus FM / PCM /
+  both for OPL4). The app fits up to that chip's voice count of pure-sine
+  oscillators against the recording, using one of two fitting workflows
+  picked via a radio box (`sinefit::FitChannelsInTurn` and
+  `sinefit::FitChannelsPerFrame`). It renders the result for
+  playback/comparison and exports a standard VGM file. Pitch and volume
+  are quantized to the chip's real registers, and each kind of voice is
+  calibrated by rendering it. The OPL family is previewed through the
+  vendored dbopl emulator. Other chips are previewed with a built-in model
+  of the chip's waveform, pitch and volume steps (`src/chips/`). The
+  selected chip is remembered in `WAV2VGM.ini`.
 - **Peak Trends mode**: tracks spectral peaks into persistent trend lines
   across the recording (additive sine-partial view of the signal) --
   currently more of a groundwork placeholder than a full workflow of its
@@ -150,6 +170,22 @@ it elsewhere and it still runs.
   against a two-tone input, confirming it splits the tones across at
   least two channels and that the combined mix is non-silent.
 
+- `chip_selftest` covers every chip target. It checks that the OPL3
+  target reproduces the original OPL3-only pipeline byte for byte (VGM
+  output and rendered mix, for both fitting workflows). It spot-checks
+  each chip's register encoding against known values (e.g. OPM KC 0x4A =
+  A4). For every chip it also checks that a rendered voice peaks at the
+  quantized pitch and that volume steps drop by what the level table
+  says. Finally, it checks that both fitting workflows find a two-tone
+  input and that the exported VGM is well formed: clock at the
+  spec-defined header offset, expected data blocks, and only known
+  commands.
+
+  Run `chip_selftest <dir>` to also write sample VGMs for every chip into
+  `<dir>`. Use them to check output in an external player such as
+  libvgm's `vgm2wav`: each chip gets a two-tone file and a
+  one-tone-per-voice `_multi` file.
+
 ## Third-party components / licensing
 
 This project vendors [`dbopl`](https://github.com/rofl0r/dbopl)
@@ -167,6 +203,12 @@ whole** — see `NOTICE.md` for details.
   been difficult to graduate from plain sine-waves.)
 - Hope to support more synthesizer types in the future, such as MOS SID,
   PSG, etc.
+- OPL4 PCM and MultiPCM files carry their own sine sample in VGM data
+  blocks. OPL4 needs no YRW801 ROM. MultiPCM's tiny embedded ROM is a VGM
+  convenience rather than something original arcade hardware could load.
+- Non-OPL previews use a model, not a full emulator. Pitches and levels
+  match the real chips, and each voice's overall loudness is approximated
+  from libvgm's cores.
 - MP3 import is not implemented (out of scope for this pass); the Import
   dialog only accepts `.wav`.
 - The spectrogram defaults to 4096 samples per column (92ms) with a

@@ -2,12 +2,13 @@
 
 #include "AudioProject.h"
 #include "SpectrogramView.h"
-#include "OplFit.h"
+#include "SineFit.h"
 #include <wx/wx.h>
 #include <wx/notebook.h>
 #include <string>
 
-// One tab per analysis mode -- "OPL3" (selected by default) and "Peak
+// One tab per analysis mode -- "Chip" (selected by default; fits the
+// recording to whichever output chip its dropdown selects) and "Peak
 // Trends" -- each holding its own SpectrogramView locked to that mode for
 // its whole life, plus that mode's own controls row. Selecting a tab IS
 // selecting the analysis mode; there's no separate menu/toggle for it.
@@ -29,6 +30,14 @@ private:
     void OnPageChanged(wxNotebookEvent& evt);
     void OnPeakControlChanged(wxSpinEvent& evt);
     void OnOpl3VisibilityChanged(wxCommandEvent& evt);
+    // Chip or OPL4-mode dropdown changed: refits the channel spinner's
+    // range to the new chip's voice count and remembers the choice.
+    void OnChipChanged(wxCommandEvent& evt);
+    chips::ChipId SelectedChipId() const;
+    void ApplyChipSelection();
+    // Frames the Chip tab's vertical axis on the selected chip's playable
+    // range (at least 0-8 kHz, at most Nyquist).
+    void ApplyChipVRange();
     void OnOpl3Start(wxCommandEvent& evt);
     void OnOpl3PlayToggle(wxCommandEvent& evt);
     void OnOpl3ExportVgm(wxCommandEvent& evt);
@@ -95,13 +104,15 @@ private:
     int m_peaksComputedAtMaxPeaks = -1;
     int m_peaksComputedAtWindowHalfWidth = -1;
 
-    // OPL3 tab's own controls, embedded directly in that tab's page. The
-    // user sets frame rate/max channels, then presses Start, which fits
-    // up to that many channels in turn against the whole recording (see
-    // oplfit::FitChannelsInTurn/FitChannelsPerFrame) -- nothing runs
-    // automatically just from having the tab open, since the whole point
-    // is to let the user configure things first.
+    // Chip tab's own controls, embedded directly in that tab's page. The
+    // user picks a chip and sets frame rate/max channels, then presses
+    // Make, which fits up to that many channels against the whole
+    // recording (see sinefit::FitChannelsInTurn/FitChannelsPerFrame) --
+    // nothing runs automatically just from having the tab open, since the
+    // whole point is to let the user configure things first.
     wxPanel* m_opl3ControlsPanel = nullptr;
+    class wxChoice* m_chipChoice = nullptr;
+    class wxChoice* m_opl4ModeChoice = nullptr;
     class wxSpinCtrl* m_opl3FrameRateSpin = nullptr;
     class wxSpinCtrl* m_opl3MaxChannelsSpin = nullptr;
     class wxRadioBox* m_opl3VisibilityRadio = nullptr;
@@ -122,10 +133,10 @@ private:
     wxTimer m_opl3PlaybackTimer;
     bool m_opl3IsPlaying = false;
 
-    // The most recently computed fit, kept around for Play/Export VGM
-    // without redoing the work. m_opl3CumulativeRendered is
-    // m_opl3Channels' combined render (see oplfit::MultiChannelSineFit).
-    std::vector<oplfit::AllFramesFit> m_opl3Channels;
+    // The most recently computed fit (with the chip it was made for), kept
+    // around for Play/Export VGM without redoing the work.
+    // m_opl3CumulativeRendered is its combined render.
+    sinefit::ChipFit m_chipFit;
     std::vector<float> m_opl3CumulativeRendered;
 
     // wxSound loads its file's audio fully into memory on construction, so

@@ -16,6 +16,10 @@ struct AppSettings
     wxString lastExportDir;
     int fftSize = 4096;
     int hopSize = 32;
+    // Last-used output chip in the Chip tab's dropdown (an index into
+    // ProjectWindow's chip list) and OPL4 mode (0 = FM, 1 = PCM, 2 = both).
+    int targetChip = 0;
+    int opl4Mode = 0;
 };
 
 // Returns the process-wide settings, loading them from disk (or falling

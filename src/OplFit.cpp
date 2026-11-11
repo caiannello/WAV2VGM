@@ -2,10 +2,10 @@
 
 #include "OplChip.h"
 #include "PeakAnalysis.h"
+#include "FitCommon.h"
 
 #include <algorithm>
 #include <cmath>
-#include <thread>
 #include <utility>
 
 namespace oplfit
@@ -47,73 +47,14 @@ double TotalLevelToLinearAmplitude(uint8_t totalLevel)
     return std::pow(10.0, -(totalLevel * kDbPerTotalLevelStep) / 20.0);
 }
 
-// Linear-magnitude version of dsp::ComputeSpectrumAtTime -- the local
-// spectral "shape" a timbre search tries to match, not just the single
-// detected peak bin.
-std::vector<double> ExtractLinearSpectrumAt(const std::vector<float>& samples, int sampleRate, double timeSeconds)
-{
-    const std::vector<double> dbfs = dsp::ComputeSpectrumAtTime(samples, sampleRate, timeSeconds);
-    std::vector<double> linear(dbfs.size());
-    for (size_t i = 0; i < dbfs.size(); ++i)
-        linear[i] = std::pow(10.0, dbfs[i] / 20.0);
-    return linear;
-}
-
-// One linear-magnitude spectrum per frame (frame f centered at
-// (f+0.5)/frameRateHz), used by FitAllFrames instead of computing each
-// frame's spectrum inline as it goes.
-using SpectrumTable = std::vector<std::vector<double>>;
-
-// Computes a SpectrumTable in parallel across available hardware
-// threads -- each frame's FFT is completely independent of every other
-// frame's (dsp::ComputeSpectrumAtTime and everything it calls only touch
-// their own stack-local buffers and a read-only cached window, so this
-// is safe), which makes this the one genuinely parallelizable part of
-// the whole fitting pipeline: the per-frame frequency/timbre decisions
-// downstream of it are inherently sequential (each one depends on the
-// previous frame's/channel's choice for continuity/residual targeting),
-// but the expensive spectrum extraction they read from doesn't have to
-// be computed on that same sequential path.
-SpectrumTable PrecomputeSpectra(const std::vector<float>& samples, int sampleRate, double frameRateHz,
-                                 int totalFrames)
-{
-    SpectrumTable table(static_cast<size_t>(std::max(0, totalFrames)));
-    if (totalFrames <= 0)
-        return table;
-
-    const double frameInterval = 1.0 / frameRateHz;
-    auto computeRange = [&](int startFrame, int endFrame) {
-        for (int f = startFrame; f < endFrame; ++f)
-        {
-            const double frameMid = (static_cast<double>(f) + 0.5) * frameInterval;
-            table[static_cast<size_t>(f)] = ExtractLinearSpectrumAt(samples, sampleRate, frameMid);
-        }
-    };
-
-    const unsigned int hwThreads = std::max(1u, std::thread::hardware_concurrency());
-    const int numThreads = static_cast<int>(std::min<unsigned int>(hwThreads, static_cast<unsigned int>(totalFrames)));
-    if (numThreads <= 1)
-    {
-        computeRange(0, totalFrames);
-        return table;
-    }
-
-    std::vector<std::thread> workers;
-    workers.reserve(static_cast<size_t>(numThreads));
-    const int chunk = (totalFrames + numThreads - 1) / numThreads;
-    for (int t = 0; t < numThreads; ++t)
-    {
-        const int start = t * chunk;
-        const int end = std::min(totalFrames, start + chunk);
-        if (start >= end)
-            break;
-        workers.emplace_back(computeRange, start, end);
-    }
-    for (std::thread& worker : workers)
-        worker.join();
-
-    return table;
-}
+// Shared with SineFit.cpp -- see FitCommon.h.
+using fitcommon::ExtractLinearSpectrumAt;
+using fitcommon::PrecomputeSpectra;
+using fitcommon::SpectralCandidate;
+using fitcommon::SpectrumTable;
+using fitcommon::TrendEnergy;
+using fitcommon::TrendLoudest;
+using fitcommon::TrendLoudestPoint;
 
 // Renders a short probe tone (channel 0, carrier at total level 0) and
 // returns its own linear-magnitude spectrum, the same shape
@@ -209,29 +150,6 @@ double CosineSimilarity(const std::vector<double>& a, const std::vector<double>&
         nb += b[i] * b[i];
     }
     return (na > 0.0 && nb > 0.0) ? dot / std::sqrt(na * nb) : 0.0;
-}
-
-double TrendEnergy(const analysis::PeakTrend& trend)
-{
-    double energy = 0.0;
-    for (const analysis::SpectralPeak& p : trend.framePoints)
-        energy += std::pow(10.0, p.magnitudeDb / 20.0);
-    return energy;
-}
-
-struct TrendLoudestPoint { double freqHz; double magnitudeDb; };
-
-// A trend's single loudest point -- its representative pitch/level for
-// frequency-banding and audibility-floor purposes (see FitChannelsInTurn),
-// the same "loudest point" convention FitTrendToChannel already uses to
-// pick a representative frame for timbre selection.
-TrendLoudestPoint TrendLoudest(const analysis::PeakTrend& trend)
-{
-    TrendLoudestPoint best{0.0, -1e300};
-    for (const analysis::SpectralPeak& p : trend.framePoints)
-        if (p.magnitudeDb > best.magnitudeDb)
-            best = TrendLoudestPoint{p.freqHz, p.magnitudeDb};
-    return best;
 }
 
 struct TimbreChoice
@@ -394,8 +312,6 @@ FitResult FitTrendToChannel(const analysis::PeakTrend& target, const std::vector
     return result;
 }
 
-struct SpectralCandidate { double freqHz; double db; double magnitude; };
-
 // Up to `maxCandidates` local-maximum bins in `spectrum` (linear
 // magnitude), loudest first -- the same "prominent feature" notion used
 // elsewhere, just simple single-bin maxima (no center-of-mass
@@ -456,37 +372,7 @@ std::vector<SpectralCandidate> FindTopCandidates(const std::vector<double>& spec
 std::vector<SpectralCandidate> FindDistinctPeaks(const std::vector<double>& spectrum, double hzPerBin,
                                                    int minBinDistance, int maxCandidates)
 {
-    std::vector<SpectralCandidate> all;
-    for (size_t i = 1; i + 1 < spectrum.size(); ++i)
-    {
-        const double freqHz = static_cast<double>(i) * hzPerBin;
-        if (freqHz > kOplMaxFreqHz)
-            break; // bins are in ascending frequency order, so nothing further out matters either
-        if (spectrum[i] > spectrum[i - 1] && spectrum[i] > spectrum[i + 1])
-            all.push_back(SpectralCandidate{freqHz, 20.0 * std::log10(std::max(spectrum[i], 1e-12)), spectrum[i]});
-    }
-    std::sort(all.begin(), all.end(),
-              [](const SpectralCandidate& a, const SpectralCandidate& b) { return a.magnitude > b.magnitude; });
-
-    std::vector<SpectralCandidate> kept;
-    const double minHzDistance = minBinDistance * hzPerBin;
-    for (const SpectralCandidate& c : all)
-    {
-        if (static_cast<int>(kept.size()) >= maxCandidates)
-            break;
-        bool tooClose = false;
-        for (const SpectralCandidate& k : kept)
-        {
-            if (std::abs(c.freqHz - k.freqHz) < minHzDistance)
-            {
-                tooClose = true;
-                break;
-            }
-        }
-        if (!tooClose)
-            kept.push_back(c);
-    }
-    return kept;
+    return fitcommon::FindDistinctPeaks(spectrum, hzPerBin, minBinDistance, maxCandidates, 0.0, kOplMaxFreqHz);
 }
 
 // A frame quieter than this is treated as silent -- don't waste a search

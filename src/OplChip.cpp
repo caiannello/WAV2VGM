@@ -58,6 +58,16 @@ void OplChip::GenerateStereo(float* outInterleaved, int count)
         outInterleaved[i] = std::clamp(buf[static_cast<size_t>(i)] / 32768.0f, -1.0f, 1.0f);
 }
 
+void OplChip::GenerateMono(float* out, int count)
+{
+    if (count <= 0)
+        return;
+    std::vector<Bit32s> buf(static_cast<size_t>(count) * 2);
+    m_impl->handler.Generate(buf.data(), static_cast<Bitu>(count));
+    for (int i = 0; i < count; ++i)
+        out[i] = std::clamp(buf[static_cast<size_t>(i)] / 32768.0f, -1.0f, 1.0f);
+}
+
 OplFnumBlock HzToFnumBlock(double freqHz)
 {
     // freqHz = fnum * kOplBaseRateHz / 2^(20-block)  =>  fnum = freqHz *

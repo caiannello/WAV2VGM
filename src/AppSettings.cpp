@@ -46,6 +46,9 @@ AppSettings LoadFromDisk()
     if (hopSize >= 1 && hopSize <= s.fftSize)
         s.hopSize = hopSize;
 
+    cfg.Read("TargetChip", &s.targetChip, s.targetChip);
+    cfg.Read("Opl4Mode", &s.opl4Mode, s.opl4Mode);
+
     return s;
 }
 
@@ -65,6 +68,8 @@ void Save()
     cfg.Write("LastExportDir", s.lastExportDir);
     cfg.Write("FftSize", s.fftSize);
     cfg.Write("HopSize", s.hopSize);
+    cfg.Write("TargetChip", s.targetChip);
+    cfg.Write("Opl4Mode", s.opl4Mode);
     cfg.Flush();
 }
 
