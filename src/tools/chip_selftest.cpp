@@ -667,6 +667,38 @@ bool CheckMidi()
         ok = false;
     }
 
+    // At the maximum bend range the same two-octave glide never leaves its
+    // note -- bends only, no restrike -- and RPN 0 carries 127.
+    {
+        const int wideRange = chips::MidiTarget::kMaxBendRange;
+        const auto wide = chips::CreateMidiTarget(wideRange);
+        const sinefit::ChipFit wideFit = sinefit::FitChannelsInTurn(wide, input, kSampleRate, frameRate, 16);
+        std::vector<uint8_t> wideBytes;
+        std::vector<MidiEvent> wideEvents;
+        if (!midi::BuildMidi(wideFit, wideBytes, err) || !ParseSmf(wideBytes, format, tracks, division, wideEvents))
+        {
+            std::printf("FAIL [MIDI]: bend range %d export failed: %s\n", wideRange, err.c_str());
+            return false;
+        }
+        int noteOns = 0;
+        for (const MidiEvent& ev : wideEvents)
+            if ((ev.status & 0xF0) == 0x90 && ev.d2 > 0)
+                ++noteOns;
+        int usedVoices = 0;
+        for (const sinefit::VoiceTrack& track : wideFit.tracks)
+            usedVoices += std::any_of(track.frames.begin(), track.frames.end(),
+                                      [](const chips::VoiceFrame& f) { return f.keyOn; }) ? 1 : 0;
+        const bool rangeSet = std::any_of(wideEvents.begin(), wideEvents.end(), [wideRange](const MidiEvent& ev) {
+            return (ev.status & 0xF0) == 0xB0 && ev.d1 == 6 && ev.d2 == wideRange;
+        });
+        if (noteOns != usedVoices || !rangeSet)
+        {
+            std::printf("FAIL [MIDI]: range %d: %d note-ons for %d voices, RPN range set=%d\n", wideRange, noteOns,
+                        usedVoices, rangeSet);
+            ok = false;
+        }
+    }
+
     std::printf("[MIDI] bytes=%zu tracks=%d bends=%d restrikes=%d framesChecked=%d\n", bytes.size(), tracks, bends,
                 restrikes, checked);
     return ok;

@@ -322,8 +322,15 @@ std::shared_ptr<const chips::ChipTarget> ProjectWindow::SelectedTarget() const
 
 void ProjectWindow::OnMidiBendRangeChanged(wxSpinEvent& WXUNUSED(evt))
 {
-    settings::Get().midiBendRange = m_midiBendRangeSpin->GetValue();
+    const int range = m_midiBendRangeSpin->GetValue();
+    settings::Get().midiBendRange = range;
     settings::Save();
+
+    // The bend range only affects how a fit is written out (pitch codes are
+    // absolute notes), so an existing MIDI fit picks up the new range
+    // without being refitted.
+    if (m_chipFit.target && m_chipFit.target->Id() == chips::ChipId::Midi)
+        m_chipFit.target = chips::CreateMidiTarget(range);
 }
 
 void ProjectWindow::ApplyChipSelection()
@@ -336,7 +343,9 @@ void ProjectWindow::ApplyChipSelection()
     const auto target = SelectedTarget();
     const int voices = target ? target->VoiceCount() : 1;
     m_opl3MaxChannelsSpin->SetRange(1, voices);
-    m_opl3MaxChannelsSpin->SetValue(voices); // every real voice by default
+    // Every real voice by default -- except MIDI, which leaves channel 10
+    // (the drum channel on most GM synths) out unless the user asks for it.
+    m_opl3MaxChannelsSpin->SetValue(isMidi ? std::min(chips::MidiTarget::kDefaultVoices, voices) : voices);
     m_opl3ControlsPanel->Layout();
     ApplyChipVRange();
 }

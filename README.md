@@ -25,9 +25,16 @@ There's also a **MIDI** output mode, which exports a Standard MIDI File
 (format 1, 960 PPQN, 120 BPM) instead of VGM:
 
 - Up to 16 monophonic channels play GM program 80 (Ocarina).
+- The voice count defaults to 15, leaving channel 10 unused. Many GM
+  synths always play channel 10 as drums and ignore any program change
+  there. Raise it to 16 to use that channel.
 - Each channel is set up with Omni Off and Mono On (CC124/CC126).
 - The pitch-bend range is set through RPN 0 (CC101/CC100 = 0, then CC6),
-  from 1 to 24 semitones; 24 is the default.
+  from 1 to 127 semitones; 24 is the default. Larger ranges mean fewer
+  note restrikes on wide pitch movement, but coarser bends: the full
+  127-semitone range is about 1.6 cents per bend step, while 24 is about
+  0.3 cents. Changing the range after a fit is made takes effect on the
+  next export without refitting.
 - Pitch changes become pitch-bend messages around the current note. A
   new note is struck only at key-on, or when the pitch moves past the bend
   range. The new note-on comes before the old note-off, so mono-mode
@@ -136,6 +143,19 @@ matching to worry about).
    - `cmake --preset windows`
    - `cmake --build --preset windows-debug`
 4. Run `build/WAV2VGM.exe`.
+
+For an optimized build use `cmake --preset windows-release` and
+`cmake --build --preset windows-release` instead. The output goes to
+`build-release/`.
+
+If configuring fails with a "Could not find a package configuration file
+provided by wxWidgets" error, CMake isn't using vcpkg. Make sure
+`VCPKG_ROOT` is set in the shell you configure from, and use the preset
+(it passes vcpkg's toolchain file for you). If a `build/` folder was
+earlier configured some other way (for example by a Visual Studio
+"Open Folder" with a different generator), delete it first, because a
+stale CMake cache keeps its old generator and its failed wxWidgets
+lookup.
 
 The first configure builds wxWidgets and its dependencies from source via
 vcpkg (a few minutes); after that they're cached and later configures are

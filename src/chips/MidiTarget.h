@@ -22,8 +22,15 @@ class MidiTarget : public ChipTarget
 {
 public:
     static constexpr int kChannels = 16;
+    // Channel 10 is where most GM synths force a drum kit, and many ignore
+    // a program change there, so the UI defaults to 15 voices (channels
+    // 1-9 and 11-16) and leaves channel 10 for the user to opt into.
+    static constexpr int kDefaultVoices = 15;
+    // RPN 0's semitone value is a MIDI data byte, so 127 is the hardware
+    // ceiling. Larger ranges trade pitch-bend resolution (127/8192
+    // semitones per step, about 1.6 cents) for fewer note restrikes.
     static constexpr int kMinBendRange = 1;
-    static constexpr int kMaxBendRange = 24;
+    static constexpr int kMaxBendRange = 127;
     static constexpr int kDefaultBendRange = 24;
     static constexpr int kGmOcarinaProgram = 79; // GM program 80, zero-based
     // Pitch codes are MIDI note numbers in 1/8192-semitone units.
