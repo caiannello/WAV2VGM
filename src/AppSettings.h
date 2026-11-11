@@ -20,6 +20,8 @@ struct AppSettings
     // ProjectWindow's chip list) and OPL4 mode (0 = FM, 1 = PCM, 2 = both).
     int targetChip = 0;
     int opl4Mode = 0;
+    // MIDI output's pitch-bend range in semitones (RPN 0), 1-24.
+    int midiBendRange = 24;
 };
 
 // Returns the process-wide settings, loading them from disk (or falling

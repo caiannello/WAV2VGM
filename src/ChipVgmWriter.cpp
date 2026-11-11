@@ -69,6 +69,11 @@ bool BuildChipVgm(const sinefit::ChipFit& fit, std::vector<uint8_t>& out, std::s
         return false;
     }
     const chips::ChipTarget& target = *fit.target;
+    if (target.Format() != chips::OutputFormat::Vgm)
+    {
+        errorMessage = target.Name() + " doesn't export to VGM.";
+        return false;
+    }
     size_t maxFrames = 0;
     for (const sinefit::VoiceTrack& track : fit.tracks)
     {

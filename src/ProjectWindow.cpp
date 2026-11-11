@@ -7,6 +7,8 @@
 #include "SineFit.h"
 #include "WavWriter.h"
 #include "ChipVgmWriter.h"
+#include "MidiWriter.h"
+#include "chips/MidiTarget.h"
 #include "AppSettings.h"
 
 #include <wx/sizer.h>
@@ -46,6 +48,7 @@ constexpr ChipChoice kChipChoices[] = {
     {"HuC6280", chips::ChipId::HuC6280},
     {"VSU (Virtual Boy)", chips::ChipId::Vsu},
     {"MultiPCM (YMW258)", chips::ChipId::MultiPcm},
+    {"MIDI (GM Ocarina)", chips::ChipId::Midi},
 };
 constexpr int kOpl4ChoiceIndex = 2;
 
@@ -132,9 +135,18 @@ void ProjectWindow::SetupUi()
     m_opl4ModeChoice = new wxChoice(m_opl3ControlsPanel, wxID_ANY, wxDefaultPosition, wxDefaultSize, opl4Labels);
     opl3Sizer->Add(m_opl4ModeChoice, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
 
+    m_midiBendLabel = new wxStaticText(m_opl3ControlsPanel, wxID_ANY, "Bend range (semitones):");
+    opl3Sizer->Add(m_midiBendLabel, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
+    m_midiBendRangeSpin = new wxSpinCtrl(m_opl3ControlsPanel, wxID_ANY, wxEmptyString, wxDefaultPosition,
+                                         wxDefaultSize, wxSP_ARROW_KEYS, chips::MidiTarget::kMinBendRange,
+                                         chips::MidiTarget::kMaxBendRange, chips::MidiTarget::kDefaultBendRange);
+    opl3Sizer->Add(m_midiBendRangeSpin, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
+
     const settings::AppSettings& saved = settings::Get();
     m_chipChoice->SetSelection(std::clamp(saved.targetChip, 0, static_cast<int>(std::size(kChipChoices)) - 1));
     m_opl4ModeChoice->SetSelection(std::clamp(saved.opl4Mode, 0, static_cast<int>(std::size(kOpl4Modes)) - 1));
+    m_midiBendRangeSpin->SetValue(std::clamp(saved.midiBendRange, chips::MidiTarget::kMinBendRange,
+                                             chips::MidiTarget::kMaxBendRange));
 
     opl3Sizer->Add(new wxStaticText(m_opl3ControlsPanel, wxID_ANY, "Frame rate (Hz):"),
                     0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
@@ -174,8 +186,8 @@ void ProjectWindow::SetupUi()
     m_opl3PlayButton = new wxButton(m_opl3ControlsPanel, wxID_ANY, "Play");
     opl3Sizer->Add(m_opl3PlayButton, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
 
-    wxButton* exportVgmButton = new wxButton(m_opl3ControlsPanel, wxID_ANY, "Export VGM...");
-    opl3Sizer->Add(exportVgmButton, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
+    m_exportButton = new wxButton(m_opl3ControlsPanel, wxID_ANY, "Export VGM...");
+    opl3Sizer->Add(m_exportButton, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
 
     const wxString visibilityChoices[] = {"Hidden", "Visible", "Difference"};
     m_opl3VisibilityRadio = new wxRadioBox(m_opl3ControlsPanel, wxID_ANY, "Overlay",
@@ -189,7 +201,8 @@ void ProjectWindow::SetupUi()
     m_opl3VisibilityRadio->Bind(wxEVT_RADIOBOX, &ProjectWindow::OnOpl3VisibilityChanged, this);
     startButton->Bind(wxEVT_BUTTON, &ProjectWindow::OnOpl3Start, this);
     m_opl3PlayButton->Bind(wxEVT_BUTTON, &ProjectWindow::OnOpl3PlayToggle, this);
-    exportVgmButton->Bind(wxEVT_BUTTON, &ProjectWindow::OnOpl3ExportVgm, this);
+    m_exportButton->Bind(wxEVT_BUTTON, &ProjectWindow::OnOpl3ExportVgm, this);
+    m_midiBendRangeSpin->Bind(wxEVT_SPINCTRL, &ProjectWindow::OnMidiBendRangeChanged, this);
 
     m_opl3View = new SpectrogramView(opl3Page);
     m_opl3View->SetAnalysisMode(SpectrogramView::AnalysisMode::Opl3);
@@ -299,10 +312,28 @@ chips::ChipId ProjectWindow::SelectedChipId() const
     return kChipChoices[chip].id;
 }
 
+std::shared_ptr<const chips::ChipTarget> ProjectWindow::SelectedTarget() const
+{
+    const chips::ChipId id = SelectedChipId();
+    if (id == chips::ChipId::Midi)
+        return chips::CreateMidiTarget(m_midiBendRangeSpin->GetValue());
+    return chips::CreateTarget(id);
+}
+
+void ProjectWindow::OnMidiBendRangeChanged(wxSpinEvent& WXUNUSED(evt))
+{
+    settings::Get().midiBendRange = m_midiBendRangeSpin->GetValue();
+    settings::Save();
+}
+
 void ProjectWindow::ApplyChipSelection()
 {
+    const bool isMidi = SelectedChipId() == chips::ChipId::Midi;
     m_opl4ModeChoice->Show(m_chipChoice->GetSelection() == kOpl4ChoiceIndex);
-    const auto target = chips::CreateTarget(SelectedChipId());
+    m_midiBendLabel->Show(isMidi);
+    m_midiBendRangeSpin->Show(isMidi);
+    m_exportButton->SetLabel(isMidi ? "Export MIDI..." : "Export VGM...");
+    const auto target = SelectedTarget();
     const int voices = target ? target->VoiceCount() : 1;
     m_opl3MaxChannelsSpin->SetRange(1, voices);
     m_opl3MaxChannelsSpin->SetValue(voices); // every real voice by default
@@ -313,7 +344,7 @@ void ProjectWindow::ApplyChipSelection()
 void ProjectWindow::ApplyChipVRange()
 {
     double topHz = 8192.0;
-    if (const auto target = chips::CreateTarget(SelectedChipId()))
+    if (const auto target = SelectedTarget())
         for (const chips::VoiceKind& kind : target->Kinds())
             topHz = std::max(topHz, kind.maxHz * 1.25);
     const double nyquist = std::max(1, m_project.SampleRate()) / 2.0;
@@ -394,7 +425,7 @@ void ProjectWindow::OnOpl3Start(wxCommandEvent& WXUNUSED(evt))
     // sinefit.h's two side-by-side workflows the radio box selects (see
     // oplfit.h's doc comments for what actually differs between them).
     const bool perFrame = m_opl3AlgorithmRadio->GetSelection() == 1;
-    const auto target = chips::CreateTarget(SelectedChipId());
+    const auto target = SelectedTarget();
     if (!target)
         return;
     wxProgressDialog progressDlg("Analyzing", "Fitting " + target->Name() + " channels...", 100, this,
@@ -433,12 +464,16 @@ void ProjectWindow::OnOpl3ExportVgm(wxCommandEvent& WXUNUSED(evt))
         return;
     }
 
+    // Exports what the current fit was made for, even if the dropdown has
+    // since been changed.
+    const bool isMidi = m_chipFit.target->Format() == chips::OutputFormat::Midi;
+    const wxString kind = isMidi ? "MIDI" : "VGM";
     settings::AppSettings& s = settings::Get();
-    const wxString defaultFileName = wxFileName(m_project.SourcePath()).GetName() + ".vgm";
-    // Exports the chip the current fit was made for, even if the dropdown
-    // has since been changed.
-    wxFileDialog dlg(this, "Export VGM", s.lastExportDir, defaultFileName,
-                      "VGM files (*.vgm)|*.vgm|All files (*.*)|*.*", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+    const wxString defaultFileName = wxFileName(m_project.SourcePath()).GetName() + (isMidi ? ".mid" : ".vgm");
+    wxFileDialog dlg(this, "Export " + kind, s.lastExportDir, defaultFileName,
+                      isMidi ? "Standard MIDI files (*.mid)|*.mid|All files (*.*)|*.*"
+                             : "VGM files (*.vgm)|*.vgm|All files (*.*)|*.*",
+                      wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
     if (dlg.ShowModal() != wxID_OK)
         return;
 
@@ -446,14 +481,16 @@ void ProjectWindow::OnOpl3ExportVgm(wxCommandEvent& WXUNUSED(evt))
     settings::Save();
 
     std::string err;
-    if (!vgm::WriteChipVgmFile(dlg.GetPath().ToStdString(), m_chipFit, err))
+    const std::string path = dlg.GetPath().ToStdString();
+    const bool ok = isMidi ? midi::WriteMidiFile(path, m_chipFit, err) : vgm::WriteChipVgmFile(path, m_chipFit, err);
+    if (!ok)
     {
         wxMessageBox(err, "Export failed", wxICON_ERROR);
         return;
     }
 
     if (wxFrame* frame = dynamic_cast<wxFrame*>(wxGetTopLevelParent(this)))
-        frame->SetStatusText("Exported " + m_chipFit.target->Name() + " VGM to " + dlg.GetPath());
+        frame->SetStatusText("Exported " + m_chipFit.target->Name() + " " + kind + " to " + dlg.GetPath());
 }
 
 void ProjectWindow::RefreshOpl3ComparisonOverlay(const dsp::ProgressCallback& progress)

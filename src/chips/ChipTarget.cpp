@@ -1,5 +1,6 @@
 #include "ChipTarget.h"
 #include "ChipCommon.h"
+#include "MidiTarget.h"
 
 #include <algorithm>
 #include <cmath>
@@ -108,6 +109,8 @@ std::shared_ptr<const ChipTarget> CreateTarget(ChipId id)
         return detail::MakeVsuTarget();
     case ChipId::MultiPcm:
         return detail::MakeMultiPcmTarget();
+    case ChipId::Midi:
+        return CreateMidiTarget(MidiTarget::kDefaultBendRange);
     }
     return nullptr;
 }

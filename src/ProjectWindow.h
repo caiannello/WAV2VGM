@@ -34,6 +34,10 @@ private:
     // range to the new chip's voice count and remembers the choice.
     void OnChipChanged(wxCommandEvent& evt);
     chips::ChipId SelectedChipId() const;
+    // The selected target, configured (MIDI's bend range comes from its
+    // own spin control).
+    std::shared_ptr<const chips::ChipTarget> SelectedTarget() const;
+    void OnMidiBendRangeChanged(wxSpinEvent& evt);
     void ApplyChipSelection();
     // Frames the Chip tab's vertical axis on the selected chip's playable
     // range (at least 0-8 kHz, at most Nyquist).
@@ -113,6 +117,9 @@ private:
     wxPanel* m_opl3ControlsPanel = nullptr;
     class wxChoice* m_chipChoice = nullptr;
     class wxChoice* m_opl4ModeChoice = nullptr;
+    class wxStaticText* m_midiBendLabel = nullptr;
+    class wxSpinCtrl* m_midiBendRangeSpin = nullptr;
+    class wxButton* m_exportButton = nullptr;
     class wxSpinCtrl* m_opl3FrameRateSpin = nullptr;
     class wxSpinCtrl* m_opl3MaxChannelsSpin = nullptr;
     class wxRadioBox* m_opl3VisibilityRadio = nullptr;

@@ -12,7 +12,9 @@ set(CHIP_SOURCES
     src/FitCommon.cpp
     src/SineFit.cpp
     src/ChipVgmWriter.cpp
+    src/MidiWriter.cpp
     src/chips/ChipTarget.cpp
+    src/chips/MidiTarget.cpp
     src/chips/OplTargets.cpp
     src/chips/OpmTarget.cpp
     src/chips/OpnTargets.cpp

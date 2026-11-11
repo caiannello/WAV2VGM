@@ -1,5 +1,7 @@
 #include "../ChipVgmWriter.h"
 #include "../Dsp.h"
+#include "../MidiWriter.h"
+#include "../chips/MidiTarget.h"
 #include "../OplFit.h"
 #include "../SineFit.h"
 #include "../VgmWriter.h"
@@ -443,12 +445,246 @@ bool CheckOpl3Parity()
     return ok;
 }
 
+struct MidiEvent
+{
+    uint32_t tick;
+    uint8_t status;
+    uint8_t d1;
+    uint8_t d2;
+};
+
+// Minimal SMF reader: header fields plus every channel event of every
+// track (meta/sysex skipped). Returns false on any structural problem.
+bool ParseSmf(const std::vector<uint8_t>& b, int& format, int& tracks, int& division, std::vector<MidiEvent>& events)
+{
+    auto be32 = [&](size_t at) { return (uint32_t(b[at]) << 24) | (uint32_t(b[at + 1]) << 16) | (uint32_t(b[at + 2]) << 8) | b[at + 3]; };
+    auto be16 = [&](size_t at) { return (int(b[at]) << 8) | b[at + 1]; };
+    if (b.size() < 14 || std::memcmp(b.data(), "MThd", 4) != 0 || be32(4) != 6)
+        return false;
+    format = be16(8);
+    tracks = be16(10);
+    division = be16(12);
+    size_t pos = 14;
+    for (int t = 0; t < tracks; ++t)
+    {
+        if (pos + 8 > b.size() || std::memcmp(&b[pos], "MTrk", 4) != 0)
+            return false;
+        const size_t end = pos + 8 + be32(pos + 4);
+        if (end > b.size())
+            return false;
+        pos += 8;
+        uint32_t tick = 0;
+        bool sawEnd = false;
+        while (pos < end)
+        {
+            uint32_t delta = 0;
+            for (;;)
+            {
+                const uint8_t c = b[pos++];
+                delta = (delta << 7) | (c & 0x7F);
+                if (!(c & 0x80))
+                    break;
+            }
+            tick += delta;
+            const uint8_t status = b[pos++];
+            if (status == 0xFF)
+            {
+                const uint8_t type = b[pos++];
+                uint32_t len = 0;
+                for (;;)
+                {
+                    const uint8_t c = b[pos++];
+                    len = (len << 7) | (c & 0x7F);
+                    if (!(c & 0x80))
+                        break;
+                }
+                pos += len;
+                if (type == 0x2F)
+                    sawEnd = true;
+            }
+            else if (status >= 0x80 && status < 0xF0)
+            {
+                const uint8_t kind = status & 0xF0;
+                const bool oneByte = kind == 0xC0 || kind == 0xD0;
+                MidiEvent e{tick, status, b[pos], oneByte ? uint8_t(0) : b[pos + 1]};
+                pos += oneByte ? 1 : 2;
+                events.push_back(e);
+            }
+            else
+            {
+                return false; // running status/sysex aren't produced by our writer
+            }
+        }
+        if (!sawEnd || pos != end)
+            return false;
+    }
+    return pos == b.size();
+}
+
+bool CheckMidi()
+{
+    bool ok = true;
+    // Channel priority: 1-9, 11-16, then 10.
+    const int expectedChannels[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 9};
+    for (int v = 0; v < 16; ++v)
+        if (chips::MidiTarget::MidiChannelOf(v) != expectedChannels[v])
+        {
+            std::printf("FAIL [MIDI]: voice %d -> channel %d, expected %d\n", v, chips::MidiTarget::MidiChannelOf(v) + 1,
+                        expectedChannels[v] + 1);
+            ok = false;
+        }
+
+    const int bendRange = 12;
+    const auto target = chips::CreateMidiTarget(bendRange);
+    ok &= CheckPitchAndLevel(*target);
+
+    // A steady tone, plus a slow 300 -> 1200 Hz glide (two octaves, so it
+    // has to restrike past the 12-semitone bend range at least once).
+    const double seconds = 1.0;
+    std::vector<float> input(static_cast<size_t>(seconds * kSampleRate));
+    double phase = 0.0;
+    for (size_t i = 0; i < input.size(); ++i)
+    {
+        const double t = static_cast<double>(i) / kSampleRate;
+        const double glideHz = 300.0 * std::pow(4.0, t / seconds);
+        phase += 2.0 * kPi * glideHz / kSampleRate;
+        input[i] = 0.4f * static_cast<float>(std::sin(2.0 * kPi * 2000.0 * t)) + 0.4f * static_cast<float>(std::sin(phase));
+    }
+    const double frameRate = 50.0;
+    const sinefit::ChipFit fit = sinefit::FitChannelsInTurn(target, input, kSampleRate, frameRate, 16);
+    std::vector<uint8_t> bytes;
+    std::string err;
+    if (fit.tracks.empty() || !midi::BuildMidi(fit, bytes, err))
+    {
+        std::printf("FAIL [MIDI]: export failed: %s\n", err.c_str());
+        return false;
+    }
+    std::vector<uint8_t> vgmBytes;
+    if (vgm::BuildChipVgm(fit, vgmBytes, err))
+    {
+        std::printf("FAIL [MIDI]: VGM export should refuse a MIDI fit\n");
+        ok = false;
+    }
+
+    int format = 0, tracks = 0, division = 0;
+    std::vector<MidiEvent> events;
+    if (!ParseSmf(bytes, format, tracks, division, events))
+    {
+        std::printf("FAIL [MIDI]: not a well-formed SMF\n");
+        return false;
+    }
+    if (format != 1 || division != midi::kTicksPerQuarter || tracks < 2)
+    {
+        std::printf("FAIL [MIDI]: format=%d tracks=%d division=%d\n", format, tracks, division);
+        ok = false;
+    }
+
+    // Replay every channel and compare its sounding pitch at each frame
+    // start against what the fit asked for.
+    std::stable_sort(events.begin(), events.end(), [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    const double ticksPerFrame = midi::kTicksPerQuarter * 1e6 / midi::kTempoMicrosPerQuarter / frameRate;
+    int bends = 0, restrikes = 0, checked = 0;
+    for (const sinefit::VoiceTrack& track : fit.tracks)
+    {
+        const int ch = chips::MidiTarget::MidiChannelOf(track.voice);
+        bool program = false, mono = false, rpnMsb = false, rpnLsb = false, range = false;
+        int note = -1, bend = 8192, expression = 127, notesOn = 0;
+        size_t e = 0;
+        for (size_t f = 0; f < track.frames.size(); ++f)
+        {
+            const uint32_t tick = static_cast<uint32_t>(std::llround(f * ticksPerFrame));
+            for (; e < events.size() && events[e].tick <= tick; ++e)
+            {
+                const MidiEvent& ev = events[e];
+                if ((ev.status & 0x0F) != ch)
+                    continue;
+                switch (ev.status & 0xF0)
+                {
+                case 0x90: note = ev.d1; ++notesOn; break;
+                case 0x80: if (ev.d1 == note) note = -1; break;
+                case 0xE0: bend = ev.d1 | (ev.d2 << 7); ++bends; break;
+                case 0xC0: program |= ev.d1 == chips::MidiTarget::kGmOcarinaProgram; break;
+                case 0xB0:
+                    mono |= ev.d1 == 126 && ev.d2 == 1;
+                    rpnMsb |= ev.d1 == 101 && ev.d2 == 0;
+                    rpnLsb |= ev.d1 == 100 && ev.d2 == 0;
+                    range |= ev.d1 == 6 && ev.d2 == bendRange;
+                    if (ev.d1 == 11) expression = ev.d2;
+                    break;
+                }
+            }
+            const VoiceFrame& fr = track.frames[f];
+            if (fr.keyOn != (note >= 0))
+            {
+                std::printf("FAIL [MIDI]: channel %d frame %zu keyOn=%d but note=%d\n", ch + 1, f, fr.keyOn, note);
+                ok = false;
+                break;
+            }
+            if (!fr.keyOn)
+                continue;
+            const double sounding = note + (bend - 8192) * bendRange / 8192.0;
+            const double wanted = chips::MidiTarget::PitchToNote(fr.pitch);
+            if (std::abs(sounding - wanted) > 0.01 || expression != chips::MidiTarget::ExpressionOf(fr.level))
+            {
+                std::printf("FAIL [MIDI]: channel %d frame %zu plays %.3f (expr %d), fit wants %.3f (expr %d)\n", ch + 1,
+                            f, sounding, expression, wanted, chips::MidiTarget::ExpressionOf(fr.level));
+                ok = false;
+                break;
+            }
+            ++checked;
+        }
+        restrikes += std::max(0, notesOn - 1);
+        if (notesOn > 0 && !(program && mono && rpnMsb && rpnLsb && range))
+        {
+            std::printf("FAIL [MIDI]: channel %d missing setup (program=%d mono=%d rpn=%d/%d range=%d)\n", ch + 1,
+                        program, mono, rpnMsb, rpnLsb, range);
+            ok = false;
+        }
+    }
+    if (bends == 0 || restrikes == 0 || checked == 0)
+    {
+        std::printf("FAIL [MIDI]: expected bends and a restrike on the glide (bends=%d restrikes=%d checked=%d)\n",
+                    bends, restrikes, checked);
+        ok = false;
+    }
+
+    // With nine simultaneous tones, channel 10 must stay unused.
+    std::vector<float> nine(static_cast<size_t>(0.4 * kSampleRate), 0.0f);
+    for (int k = 0; k < 9; ++k)
+        for (size_t i = 0; i < nine.size(); ++i)
+            nine[i] += static_cast<float>(0.08 * std::sin(2.0 * kPi * (200.0 + 150.0 * k) * i / kSampleRate));
+    const sinefit::ChipFit nineFit = sinefit::FitChannelsPerFrame(target, nine, kSampleRate, frameRate, 16);
+    std::vector<uint8_t> nineBytes;
+    std::vector<MidiEvent> nineEvents;
+    if (!midi::BuildMidi(nineFit, nineBytes, err) || !ParseSmf(nineBytes, format, tracks, division, nineEvents))
+    {
+        std::printf("FAIL [MIDI]: nine-tone export failed\n");
+        ok = false;
+    }
+    else if (std::any_of(nineEvents.begin(), nineEvents.end(), [](const MidiEvent& ev) { return (ev.status & 0x0F) == 9; }))
+    {
+        std::printf("FAIL [MIDI]: channel 10 used with only nine voices needed\n");
+        ok = false;
+    }
+
+    std::printf("[MIDI] bytes=%zu tracks=%d bends=%d restrikes=%d framesChecked=%d\n", bytes.size(), tracks, bends,
+                restrikes, checked);
+    return ok;
+}
+
 // `chip_selftest <dir>` additionally writes one VGM per target -- a 440 Hz
 // + 1500 Hz two-tone fit -- into <dir>, for checking in an external VGM
 // player (e.g. libvgm's vgm2wav).
 void DumpVgms(const std::string& dir)
 {
     const std::vector<float> input = TwoTones(440.0, 1500.0, 2.0);
+    {
+        const sinefit::ChipFit fit = sinefit::FitChannelsInTurn(chips::CreateMidiTarget(chips::MidiTarget::kDefaultBendRange),
+                                                                input, kSampleRate, 50.0, 16);
+        std::string err;
+        if (midi::WriteMidiFile(dir + "/MIDI.mid", fit, err))
+            std::printf("wrote %s/MIDI.mid\n", dir.c_str());
+    }
     for (ChipId id : kAllChips)
     {
         const auto target = chips::CreateTarget(id);
@@ -494,6 +730,7 @@ int main(int argc, char** argv)
     if (argc > 1)
         DumpVgms(argv[1]);
     bool ok = true;
+    ok &= CheckMidi();
     ok &= CheckOpl3Parity();
     ok &= CheckRegisterEncodings();
     for (ChipId id : kAllChips)

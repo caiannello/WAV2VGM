@@ -32,6 +32,13 @@ enum class ChipId
     HuC6280,
     Vsu,
     MultiPcm,
+    Midi, // General MIDI file output -- see MidiTarget.h
+};
+
+enum class OutputFormat
+{
+    Vgm,
+    Midi,
 };
 
 // One voice's state for one output frame. `pitch` and `level` are
@@ -112,6 +119,9 @@ public:
 
     virtual ChipId Id() const = 0;
     virtual std::string Name() const = 0;
+    // What file this target exports to. Non-VGM targets return null from
+    // CreateWriter/CreateVgmEncoder and are exported by their own writer.
+    virtual OutputFormat Format() const { return OutputFormat::Vgm; }
 
     int VoiceCount() const { return static_cast<int>(m_voiceKind.size()); }
     const std::vector<VoiceKind>& Kinds() const { return m_kinds; }

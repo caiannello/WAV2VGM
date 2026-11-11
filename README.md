@@ -21,6 +21,22 @@ player. Supported output chips:
 
 Square-wave (SSG), noise, rhythm and ADPCM parts are left silent.
 
+There's also a **MIDI** output mode, which exports a Standard MIDI File
+(format 1, 960 PPQN, 120 BPM) instead of VGM:
+
+- Up to 16 monophonic channels play GM program 80 (Ocarina).
+- Each channel is set up with Omni Off and Mono On (CC124/CC126).
+- The pitch-bend range is set through RPN 0 (CC101/CC100 = 0, then CC6),
+  from 1 to 24 semitones; 24 is the default.
+- Pitch changes become pitch-bend messages around the current note. A
+  new note is struck only at key-on, or when the pitch moves past the bend
+  range. The new note-on comes before the old note-off, so mono-mode
+  synths play it legato.
+- Level changes become CC11 (Expression), using GM's 40*log10(cc/127)
+  volume curve.
+- Channels fill in the order 1-9, then 11-16, and channel 10 is used last,
+  because many GM synths force channel 10 to drums.
+
 This is a C++ rewrite of the original python3/pygame experiment which was 
 featured on Hackaday, and that version is still available in release v1.0. 
 The Python version is way messier, has broken features, and lacks a proper 
@@ -184,7 +200,15 @@ it elsewhere and it still runs.
   Run `chip_selftest <dir>` to also write sample VGMs for every chip into
   `<dir>`. Use them to check output in an external player such as
   libvgm's `vgm2wav`: each chip gets a two-tone file and a
-  one-tone-per-voice `_multi` file.
+  one-tone-per-voice `_multi` file. A `MIDI.mid` sample is written too.
+
+  The test also covers MIDI export. It parses the file and replays every
+  channel event, checking that on every frame the sounding note plus
+  pitch bend and the CC11 value match the fit. A gliding test tone checks
+  that pitch bends are used, plus a new note once the glide passes the
+  bend range. It also checks each channel's setup messages (program, mono
+  mode, RPN 0 range), and that channel 10 stays unused when nine voices
+  are enough.
 
 ## Third-party components / licensing
 
