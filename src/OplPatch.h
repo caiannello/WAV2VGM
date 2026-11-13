@@ -3,6 +3,7 @@
 #include "OplChip.h"
 
 #include <cstdint>
+#include <functional>
 
 // Register-level model for driving a single 2-operator OPL3 channel over
 // time: a ChannelStaticSetup chosen once (envelope shape, algorithm,
@@ -91,5 +92,13 @@ void SetupChannel(OplChip& chip, int channelIndex, const ChannelStaticSetup& set
 // level in place with no re-trigger -- only an actual keyOn flip costs a
 // (brief, given the fast attack/release envelope) transition.
 void ApplyFrame(OplChip& chip, int channelIndex, const FramePatch& frame);
+
+// Same register sequences, sent to an arbitrary destination instead of an
+// OplChip -- used by the chip-neutral OPL2/OPL3/OPL4 targets (see
+// chips/OplTargets.cpp), which route OPL4's FM writes to VGM port numbers
+// of their own.
+using RegWriteFn = std::function<void(int bank, uint8_t reg, uint8_t value)>;
+void SetupChannel(const RegWriteFn& write, int channelIndex, const ChannelStaticSetup& setup);
+void ApplyFrame(const RegWriteFn& write, int channelIndex, const FramePatch& frame);
 
 } // namespace opl

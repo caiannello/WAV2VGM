@@ -1,10 +1,48 @@
 # WAV2VGM
 
 A portable C++ GUI app that imports audio, normalizes it to mono 44.1 kHz,
-and approximates it using real synth-chip register settings -- currently an
-OPL3 (YMF262) FM synthesizer, as a simple additive sum of sine-waves of 
-varying frequencies and volumes-- exportable as a standard VGM file playable
-on real hardware or any VGM player. 
+and approximates it using real synth-chip register settings, as a simple
+additive sum of sine-waves of varying frequencies and volumes. The result
+can be exported as a standard VGM file playable on real hardware or any VGM
+player. Supported output chips:
+
+| Chip | Sine voices | How each voice makes a sine |
+| --- | --- | --- |
+| OPL3 (YMF262) | 18 | 2-op channel, additive mode, sine carrier |
+| OPL2 (YM3812) | 9 | same as OPL3, bank 0 only |
+| OPL4 (YMF278B) | 18 FM / 24 PCM / 42 both | FM as OPL3; PCM slots loop a sine sample uploaded to sample RAM |
+| OPM (YM2151) | 8 | algorithm 7, one operator per channel |
+| OPN (YM2203) | 6 | algorithm 7; channel 3 in special mode gives 4 independent operators |
+| OPNA (YM2608) | 9 | as OPN, 6 FM channels |
+| OPN2 (YM2612) | 9 | as OPNA |
+| HuC6280 | 6 | 32-step 5-bit sine wavetable |
+| VSU (Virtual Boy) | 5 | 32-step 6-bit sine wavetable |
+| MultiPCM (YMW258) | 28 | loops a sine sample from a small ROM embedded in the VGM |
+
+Square-wave (SSG), noise, rhythm and ADPCM parts are left silent.
+
+There's also a **MIDI** output mode, which exports a Standard MIDI File
+(format 1, 960 PPQN, 120 BPM) instead of VGM:
+
+- Up to 16 monophonic channels play GM program 80 (Ocarina).
+- The voice count defaults to 15, leaving channel 10 unused. Many GM
+  synths always play channel 10 as drums and ignore any program change
+  there. Raise it to 16 to use that channel.
+- Each channel is set up with Omni Off and Mono On (CC124/CC126).
+- The pitch-bend range is set through RPN 0 (CC101/CC100 = 0, then CC6),
+  from 1 to 127 semitones; 24 is the default. Larger ranges mean fewer
+  note restrikes on wide pitch movement, but coarser bends: the full
+  127-semitone range is about 1.6 cents per bend step, while 24 is about
+  0.3 cents. Changing the range after a fit is made takes effect on the
+  next export without refitting.
+- Pitch changes become pitch-bend messages around the current note. A
+  new note is struck only at key-on, or when the pitch moves past the bend
+  range. The new note-on comes before the old note-off, so mono-mode
+  synths play it legato.
+- Level changes become CC11 (Expression), using GM's 40*log10(cc/127)
+  volume curve.
+- Channels fill in the order 1-9, then 11-16, and channel 10 is used last,
+  because many GM synths force channel 10 to drums.
 
 This is a C++ rewrite of the original python3/pygame experiment which was 
 featured on Hackaday, and that version is still available in release v1.0. 
@@ -42,7 +80,7 @@ The input folder has some example input WAV files, and the output folder has the
 ## Features
 
 - Main window with File menu: Import WAV, Exit
-- Child project windows (MDI) with one tab per analysis mode -- "OPL3"
+- Child project windows (MDI) with one tab per analysis mode -- "Chip"
   (selected by default) and "Peak Trends" -- each holding its own
   scrollable/zoomable spectrogram view locked to that mode, plus that
   mode's own controls row directly above it. Selecting a tab selects the
@@ -53,12 +91,34 @@ The input folder has some example input WAV files, and the output folder has the
   the default 32-sample hop means hundreds of thousands of FFT columns
   for a several-minute recording) mapped through a fixed 5-stop dBFS
   heatmap gradient (black/blue/red/yellow/white)
-- **OPL3 mode**: fits up to 18 real OPL3 channels' worth of pure-sine
-  oscillators against the recording (two side-by-side fitting workflows,
-  picked via a radio box -- see `oplfit::FitChannelsInTurn` and
-  `oplfit::FitChannelsPerFrame`), renders the result back through a
-  vendored OPL3 emulator for playback/comparison, and exports a
-  standard VGM file
+- **Chip mode**: pick an output chip from the dropdown (plus FM / PCM /
+  both for OPL4). The app fits up to that chip's voice count of pure-sine
+  oscillators against the recording, using one of three fitting workflows
+  picked via a radio box, then renders the result for playback/comparison
+  and exports a standard VGM file. Pitch and volume are quantized to the
+  chip's real registers, and each kind of voice is calibrated by rendering
+  it. The OPL family is previewed through the vendored dbopl emulator.
+  Other chips are previewed with a built-in model of the chip's waveform,
+  pitch and volume steps (`src/chips/`). The selected chip is remembered in
+  `WAV2VGM.ini`.
+  - **Trend-based** (`sinefit::FitChannelsInTurn`): one persistent channel
+    per tracked peak trend, so identity is guaranteed but brief content is
+    dropped.
+  - **Per-frame** (`sinefit::FitChannelsPerFrame`): every frame gets its own
+    loudest peaks, channel = rank. Dense, but a channel can jump to a
+    different partial from one frame to the next.
+  - **Chains** (`sinefit::FitChannelsByChains`): extracts one continuous
+    pitch path at a time from the residual spectrum by dynamic programming,
+    gives it a voice for its whole lifetime, subtracts its leakage, and
+    repeats; whatever residual is left (noise, fricatives, transients) then
+    fills any still-free voices per frame. This keeps per-frame density
+    while sustained partials stay on one voice, so there are far fewer
+    re-attacks and pitch jumps. Levels of overlapping partials are solved
+    jointly per frame, and peak frequency/level are interpolated between
+    bins.
+  - After each fit the status bar reports the *fit score*: similarity,
+    average spectral error in dB, key-on count and pitch-jump count. That's
+    the practical way to compare the three workflows on your own material.
 - **Peak Trends mode**: tracks spectral peaks into persistent trend lines
   across the recording (additive sine-partial view of the signal) --
   currently more of a groundwork placeholder than a full workflow of its
@@ -100,6 +160,19 @@ matching to worry about).
    - `cmake --preset windows`
    - `cmake --build --preset windows-debug`
 4. Run `build/WAV2VGM.exe`.
+
+For an optimized build use `cmake --preset windows-release` and
+`cmake --build --preset windows-release` instead. The output goes to
+`build-release/`.
+
+If configuring fails with a "Could not find a package configuration file
+provided by wxWidgets" error, CMake isn't using vcpkg. Make sure
+`VCPKG_ROOT` is set in the shell you configure from, and use the preset
+(it passes vcpkg's toolchain file for you). If a `build/` folder was
+earlier configured some other way (for example by a Visual Studio
+"Open Folder" with a different generator), delete it first, because a
+stale CMake cache keeps its old generator and its failed wxWidgets
+lookup.
 
 The first configure builds wxWidgets and its dependencies from source via
 vcpkg (a few minutes); after that they're cached and later configures are
@@ -150,6 +223,39 @@ it elsewhere and it still runs.
   against a two-tone input, confirming it splits the tones across at
   least two channels and that the combined mix is non-silent.
 
+- `fit_bench <input.wav> [chip] [voices] [frameRateHz] [outDir]` runs all
+  three fitting workflows on a real recording and prints their fit scores,
+  density, timing and continuity counts side by side (writing each
+  workflow's VGM too, if `outDir` is given). That's the quickest way to
+  judge a change against your own material instead of a synthetic test.
+- `chip_selftest` covers every chip target. It checks that the OPL3
+  target reproduces the original OPL3-only pipeline byte for byte (VGM
+  output and rendered mix, for both fitting workflows). It also covers the
+  Chains workflow: a four-frame burst still gets represented (density), a
+  sustained tone isn't chopped into re-attacks, and on OPL4's mixed
+  FM + PCM target a tone out of FM's range lands on a PCM voice instead of
+  being clamped. It spot-checks
+  each chip's register encoding against known values (e.g. OPM KC 0x4A =
+  A4). For every chip it also checks that a rendered voice peaks at the
+  quantized pitch and that volume steps drop by what the level table
+  says. Finally, it checks that both fitting workflows find a two-tone
+  input and that the exported VGM is well formed: clock at the
+  spec-defined header offset, expected data blocks, and only known
+  commands.
+
+  Run `chip_selftest <dir>` to also write sample VGMs for every chip into
+  `<dir>`. Use them to check output in an external player such as
+  libvgm's `vgm2wav`: each chip gets a two-tone file and a
+  one-tone-per-voice `_multi` file. A `MIDI.mid` sample is written too.
+
+  The test also covers MIDI export. It parses the file and replays every
+  channel event, checking that on every frame the sounding note plus
+  pitch bend and the CC11 value match the fit. A gliding test tone checks
+  that pitch bends are used, plus a new note once the glide passes the
+  bend range. It also checks each channel's setup messages (program, mono
+  mode, RPN 0 range), and that channel 10 stays unused when nine voices
+  are enough.
+
 ## Third-party components / licensing
 
 This project vendors [`dbopl`](https://github.com/rofl0r/dbopl)
@@ -167,6 +273,12 @@ whole** — see `NOTICE.md` for details.
   been difficult to graduate from plain sine-waves.)
 - Hope to support more synthesizer types in the future, such as MOS SID,
   PSG, etc.
+- OPL4 PCM and MultiPCM files carry their own sine sample in VGM data
+  blocks. OPL4 needs no YRW801 ROM. MultiPCM's tiny embedded ROM is a VGM
+  convenience rather than something original arcade hardware could load.
+- Non-OPL previews use a model, not a full emulator. Pitches and levels
+  match the real chips, and each voice's overall loudness is approximated
+  from libvgm's cores.
 - MP3 import is not implemented (out of scope for this pass); the Import
   dialog only accepts `.wav`.
 - The spectrogram defaults to 4096 samples per column (92ms) with a

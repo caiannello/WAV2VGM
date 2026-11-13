@@ -36,6 +36,11 @@ public:
     // generates mono and only the left channel of each pair is filled.
     void GenerateStereo(float* outInterleaved, int count);
 
+    // OPL2-compatible mode only (OPL3 mode never enabled): dbopl then
+    // writes `count` contiguous mono samples rather than interleaved
+    // pairs, so GenerateStereo's layout doesn't apply.
+    void GenerateMono(float* out, int count);
+
 private:
     // Opaque: avoids pulling dbopl.h's macro-heavy, C-style declarations
     // into every translation unit that just wants to drive the chip.
