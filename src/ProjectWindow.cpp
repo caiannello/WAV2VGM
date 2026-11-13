@@ -24,6 +24,7 @@
 #include <wx/filefn.h>
 #include <wx/filedlg.h>
 #include <algorithm>
+#include <chrono>
 #include <iterator>
 #include <thread>
 
@@ -165,15 +166,15 @@ void ProjectWindow::SetupUi()
                                             oplfit::kDefaultMaxChannels);
     opl3Sizer->Add(m_opl3MaxChannelsSpin, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
 
-    // Two fitting workflows live side by side in oplfit.h for direct
-    // comparison -- see the doc comments on FitChannelsInTurn and
-    // FitChannelsPerFrame for why neither has simply replaced the other.
-    // Per-frame defaults selected: it's the one that came out ahead in
-    // the JFK-recording A/B comparison so far.
-    const wxString algorithmChoices[] = {"Trend-based", "Per-frame"};
+    // Three fitting workflows live side by side in SineFit.h for direct
+    // comparison -- see the doc comments on FitChannelsInTurn,
+    // FitChannelsPerFrame and FitChannelsByChains for what each trades
+    // away. Per-frame stays the default (previous behaviour); "Chains" is
+    // the newest and generally the closest fit, at fewer re-attacks.
+    const wxString algorithmChoices[] = {"Trend-based", "Per-frame", "Chains"};
     m_opl3AlgorithmRadio = new wxRadioBox(m_opl3ControlsPanel, wxID_ANY, "Fitting",
-                                           wxDefaultPosition, wxDefaultSize, 2, algorithmChoices,
-                                           2, wxRA_SPECIFY_COLS);
+                                           wxDefaultPosition, wxDefaultSize, 3, algorithmChoices,
+                                           3, wxRA_SPECIFY_COLS);
     m_opl3AlgorithmRadio->SetSelection(1); // Per-frame
     opl3Sizer->Add(m_opl3AlgorithmRadio, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
 
@@ -431,23 +432,41 @@ void ProjectWindow::OnOpl3Start(wxCommandEvent& WXUNUSED(evt))
     const int maxChannels = m_opl3MaxChannelsSpin->GetValue();
 
     // Discards any previous fit and starts fresh, using whichever of
-    // sinefit.h's two side-by-side workflows the radio box selects (see
-    // oplfit.h's doc comments for what actually differs between them).
-    const bool perFrame = m_opl3AlgorithmRadio->GetSelection() == 1;
+    // SineFit.h's three side-by-side workflows the radio box selects (see
+    // their doc comments for what actually differs between them).
+    const int algorithm = m_opl3AlgorithmRadio->GetSelection();
     const auto target = SelectedTarget();
     if (!target)
         return;
     wxProgressDialog progressDlg("Analyzing", "Fitting " + target->Name() + " channels...", 100, this,
                                   wxPD_APP_MODAL | wxPD_AUTO_HIDE | wxPD_ELAPSED_TIME);
     auto progressCallback = [&progressDlg](int percent) { progressDlg.Update(std::clamp(percent, 0, 100)); };
-    sinefit::ChipFit fit = perFrame
+    const auto started = std::chrono::steady_clock::now();
+    sinefit::ChipFit fit = (algorithm == 2)
+        ? sinefit::FitChannelsByChains(target, m_project.Samples(), m_project.SampleRate(), frameRateHz, maxChannels,
+                                        progressCallback)
+        : (algorithm == 1)
         ? sinefit::FitChannelsPerFrame(target, m_project.Samples(), m_project.SampleRate(), frameRateHz, maxChannels,
                                         progressCallback)
         : sinefit::FitChannelsInTurn(target, m_project.Samples(), m_project.SampleRate(), frameRateHz, maxChannels,
                                       progressCallback);
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started).count();
 
     m_opl3CumulativeRendered = std::move(fit.mixRendered);
     m_chipFit = std::move(fit);
+
+    // The fit's own quality readout -- the honest way to compare the three
+    // workflows against each other on the same recording.
+    if (wxFrame* frame = dynamic_cast<wxFrame*>(wxGetTopLevelParent(this)))
+    {
+        const sinefit::FitScore& score = m_chipFit.score;
+        frame->SetStatusText(wxString::Format("%s: %zu voices, similarity %.3f, %.2f dB avg spectral error, "
+                                               "%d key-ons, %d pitch jumps (%lld ms)",
+                                               m_chipFit.target->Name(), m_chipFit.tracks.size(), score.similarity,
+                                               score.meanAbsDbError, score.keyOnCount, score.pitchJumpCount,
+                                               static_cast<long long>(elapsedMs)));
+    }
 
     // Reuses the same progress dialog for this second phase (rebuilding
     // the comparison overlay) rather than letting it close and the app

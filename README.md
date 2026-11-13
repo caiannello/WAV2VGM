@@ -93,15 +93,32 @@ The input folder has some example input WAV files, and the output folder has the
   heatmap gradient (black/blue/red/yellow/white)
 - **Chip mode**: pick an output chip from the dropdown (plus FM / PCM /
   both for OPL4). The app fits up to that chip's voice count of pure-sine
-  oscillators against the recording, using one of two fitting workflows
-  picked via a radio box (`sinefit::FitChannelsInTurn` and
-  `sinefit::FitChannelsPerFrame`). It renders the result for
-  playback/comparison and exports a standard VGM file. Pitch and volume
-  are quantized to the chip's real registers, and each kind of voice is
-  calibrated by rendering it. The OPL family is previewed through the
-  vendored dbopl emulator. Other chips are previewed with a built-in model
-  of the chip's waveform, pitch and volume steps (`src/chips/`). The
-  selected chip is remembered in `WAV2VGM.ini`.
+  oscillators against the recording, using one of three fitting workflows
+  picked via a radio box, then renders the result for playback/comparison
+  and exports a standard VGM file. Pitch and volume are quantized to the
+  chip's real registers, and each kind of voice is calibrated by rendering
+  it. The OPL family is previewed through the vendored dbopl emulator.
+  Other chips are previewed with a built-in model of the chip's waveform,
+  pitch and volume steps (`src/chips/`). The selected chip is remembered in
+  `WAV2VGM.ini`.
+  - **Trend-based** (`sinefit::FitChannelsInTurn`): one persistent channel
+    per tracked peak trend, so identity is guaranteed but brief content is
+    dropped.
+  - **Per-frame** (`sinefit::FitChannelsPerFrame`): every frame gets its own
+    loudest peaks, channel = rank. Dense, but a channel can jump to a
+    different partial from one frame to the next.
+  - **Chains** (`sinefit::FitChannelsByChains`): extracts one continuous
+    pitch path at a time from the residual spectrum by dynamic programming,
+    gives it a voice for its whole lifetime, subtracts its leakage, and
+    repeats; whatever residual is left (noise, fricatives, transients) then
+    fills any still-free voices per frame. This keeps per-frame density
+    while sustained partials stay on one voice, so there are far fewer
+    re-attacks and pitch jumps. Levels of overlapping partials are solved
+    jointly per frame, and peak frequency/level are interpolated between
+    bins.
+  - After each fit the status bar reports the *fit score*: similarity,
+    average spectral error in dB, key-on count and pitch-jump count. That's
+    the practical way to compare the three workflows on your own material.
 - **Peak Trends mode**: tracks spectral peaks into persistent trend lines
   across the recording (additive sine-partial view of the signal) --
   currently more of a groundwork placeholder than a full workflow of its
@@ -206,9 +223,18 @@ it elsewhere and it still runs.
   against a two-tone input, confirming it splits the tones across at
   least two channels and that the combined mix is non-silent.
 
+- `fit_bench <input.wav> [chip] [voices] [frameRateHz] [outDir]` runs all
+  three fitting workflows on a real recording and prints their fit scores,
+  density, timing and continuity counts side by side (writing each
+  workflow's VGM too, if `outDir` is given). That's the quickest way to
+  judge a change against your own material instead of a synthetic test.
 - `chip_selftest` covers every chip target. It checks that the OPL3
   target reproduces the original OPL3-only pipeline byte for byte (VGM
-  output and rendered mix, for both fitting workflows). It spot-checks
+  output and rendered mix, for both fitting workflows). It also covers the
+  Chains workflow: a four-frame burst still gets represented (density), a
+  sustained tone isn't chopped into re-attacks, and on OPL4's mixed
+  FM + PCM target a tone out of FM's range lands on a PCM voice instead of
+  being clamped. It spot-checks
   each chip's register encoding against known values (e.g. OPM KC 0x4A =
   A4). For every chip it also checks that a rendered voice peaks at the
   quantized pitch and that volume steps drop by what the level table

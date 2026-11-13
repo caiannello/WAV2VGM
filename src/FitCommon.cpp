@@ -61,7 +61,7 @@ SpectrumTable PrecomputeSpectra(const std::vector<float>& samples, int sampleRat
 
 std::vector<SpectralCandidate> FindDistinctPeaks(const std::vector<double>& spectrum, double hzPerBin,
                                                    int minBinDistance, int maxCandidates,
-                                                   double minHz, double maxHz)
+                                                   double minHz, double maxHz, bool refineSubBin)
 {
     std::vector<SpectralCandidate> all;
     for (size_t i = 1; i + 1 < spectrum.size(); ++i)
@@ -72,7 +72,26 @@ std::vector<SpectralCandidate> FindDistinctPeaks(const std::vector<double>& spec
         if (freqHz < minHz)
             continue;
         if (spectrum[i] > spectrum[i - 1] && spectrum[i] > spectrum[i + 1])
-            all.push_back(SpectralCandidate{freqHz, 20.0 * std::log10(std::max(spectrum[i], 1e-12)), spectrum[i]});
+        {
+            double db = 20.0 * std::log10(std::max(spectrum[i], 1e-12));
+            double peakHz = freqHz;
+            if (refineSubBin)
+            {
+                // Parabolic fit through the three log-magnitudes (the
+                // Blackman mainlobe is close enough to parabolic near its
+                // top): the vertex offset is in bins, -0.5..+0.5.
+                const double a = 20.0 * std::log10(std::max(spectrum[i - 1], 1e-12));
+                const double c = 20.0 * std::log10(std::max(spectrum[i + 1], 1e-12));
+                const double denom = a - 2.0 * db + c;
+                if (std::abs(denom) > 1e-9)
+                {
+                    const double offset = std::clamp(0.5 * (a - c) / denom, -0.5, 0.5);
+                    peakHz = (static_cast<double>(i) + offset) * hzPerBin;
+                    db -= 0.25 * (a - c) * offset; // vertex value, likewise in dB
+                }
+            }
+            all.push_back(SpectralCandidate{peakHz, db, std::pow(10.0, db / 20.0)});
+        }
     }
     std::sort(all.begin(), all.end(),
               [](const SpectralCandidate& a, const SpectralCandidate& b) { return a.magnitude > b.magnitude; });
@@ -96,6 +115,46 @@ std::vector<SpectralCandidate> FindDistinctPeaks(const std::vector<double>& spec
             kept.push_back(c);
     }
     return kept;
+}
+
+LeakageModel::LeakageModel(int fftSize)
+{
+    if (fftSize <= 0)
+        return;
+    const std::vector<double> window = dsp::MakeBlackmanWindow(fftSize);
+    const int padded = fftSize * kStepsPerBin;
+    std::vector<std::complex<double>> buf(static_cast<size_t>(padded), std::complex<double>(0.0, 0.0));
+    double sum = 0.0;
+    for (int i = 0; i < fftSize; ++i)
+    {
+        buf[static_cast<size_t>(i)] = window[static_cast<size_t>(i)];
+        sum += window[static_cast<size_t>(i)];
+    }
+    if (sum <= 0.0)
+        return;
+    dsp::FftForwardRadix2(buf);
+
+    // dsp normalizes a bin-centred full-scale sinusoid to 0 dBFS, which is
+    // exactly |DTFT| / sum(window) -- so this is the same scale as the
+    // magnitudes the fitters work with.
+    m_response.resize(static_cast<size_t>(kMaxBins * kStepsPerBin) + 1);
+    for (size_t i = 0; i < m_response.size(); ++i)
+        m_response[i] = std::abs(buf[i]) / sum;
+}
+
+double LeakageModel::Response(double deltaHz, double hzPerBin) const
+{
+    if (m_response.empty() || hzPerBin <= 0.0)
+        return 0.0;
+    const double steps = std::abs(deltaHz) / hzPerBin * kStepsPerBin;
+    const double limit = static_cast<double>(m_response.size() - 1);
+    if (steps >= limit)
+        return 0.0;
+    const size_t i = static_cast<size_t>(steps);
+    const double frac = steps - static_cast<double>(i);
+    const double a = m_response[i];
+    const double b = m_response[std::min(i + 1, m_response.size() - 1)];
+    return a + (b - a) * frac;
 }
 
 double TrendEnergy(const analysis::PeakTrend& trend)

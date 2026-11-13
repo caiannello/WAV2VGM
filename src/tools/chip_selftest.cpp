@@ -704,6 +704,125 @@ bool CheckMidi()
     return ok;
 }
 
+// Chain workflow: it has to behave like the per-frame one on density (a
+// very short burst still gets represented) and like the trend-based one on
+// identity (a sustained partial is one unbroken chain, so no re-attacks).
+bool CheckChainFit()
+{
+    const auto target = chips::CreateTarget(ChipId::Opl3);
+    const double frameRate = 100.0;
+    const double seconds = 0.5;
+    const int totalSamples = static_cast<int>(seconds * kSampleRate);
+    std::vector<float> input(static_cast<size_t>(totalSamples), 0.0f);
+    for (int i = 0; i < totalSamples; ++i)
+    {
+        const double t = static_cast<double>(i) / kSampleRate;
+        double v = 0.4 * std::sin(2.0 * kPi * 900.0 * t);
+        if (t >= 0.20 && t < 0.24) // four frames' worth -- far too short for a trend to form
+            v += 0.4 * std::sin(2.0 * kPi * 300.0 * t);
+        input[static_cast<size_t>(i)] = static_cast<float>(v);
+    }
+
+    bool ok = true;
+    const sinefit::ChipFit fit = sinefit::FitChannelsByChains(target, input, kSampleRate, frameRate, 4);
+    if (fit.tracks.empty() || fit.mixRendered.empty())
+    {
+        std::printf("FAIL [chains]: fit produced nothing\n");
+        return false;
+    }
+    if (fit.tracks.size() > 4)
+    {
+        std::printf("FAIL [chains]: %zu tracks for a 4-voice budget\n", fit.tracks.size());
+        ok = false;
+    }
+
+    // Density: both partials present together during the burst.
+    const size_t probe = static_cast<size_t>(0.21 * frameRate);
+    bool saw300 = false, saw900 = false;
+    for (const sinefit::VoiceTrack& track : fit.tracks)
+    {
+        if (probe >= track.frames.size() || !track.frames[probe].keyOn)
+            continue;
+        const double hz = target->PitchToHz(track.voice, track.frames[probe].pitch);
+        saw300 |= std::abs(hz - 300.0) < 30.0;
+        saw900 |= std::abs(hz - 900.0) < 30.0;
+    }
+    if (!saw300 || !saw900)
+    {
+        std::printf("FAIL [chains]: burst frame missing a partial (300 Hz %s, 900 Hz %s)\n",
+                    saw300 ? "found" : "missing", saw900 ? "found" : "missing");
+        ok = false;
+    }
+
+    // Identity: the 900 Hz tone runs the whole file, so it must not be
+    // chopped into a new chain every frame or so.
+    if (fit.score.keyOnCount > 8)
+    {
+        std::printf("FAIL [chains]: %d key-ons on a two-partial input\n", fit.score.keyOnCount);
+        ok = false;
+    }
+
+    // Cross-check the three workflows' scores on the same input.
+    const sinefit::ChipFit perFrame = sinefit::FitChannelsPerFrame(target, input, kSampleRate, frameRate, 4);
+    const sinefit::ChipFit inTurn = sinefit::FitChannelsInTurn(target, input, kSampleRate, frameRate, 4);
+    const auto report = [](const char* name, const sinefit::ChipFit& f) {
+        std::printf("  %-10s similarity=%.3f err=%.2fdB keyOns=%d tracks=%zu\n", name, f.score.similarity,
+                    f.score.meanAbsDbError, f.score.keyOnCount, f.tracks.size());
+    };
+    std::printf("[chains] burst/continuity:\n");
+    report("chains", fit);
+    report("per-frame", perFrame);
+    report("trend", inTurn);
+
+    for (const sinefit::ChipFit* f : {&fit, &perFrame, &inTurn})
+    {
+        if (!(f->score.similarity > 0.0 && f->score.similarity <= 1.0) || !std::isfinite(f->score.meanAbsDbError))
+        {
+            std::printf("FAIL [chains]: implausible fit score\n");
+            ok = false;
+        }
+    }
+
+    // Mixed-kind target: an unplayable-on-FM high tone must land on a PCM
+    // voice rather than being clamped into the FM range.
+    const auto both = chips::CreateTarget(ChipId::Opl4Both);
+    std::vector<float> wide(static_cast<size_t>(0.3 * kSampleRate), 0.0f);
+    for (size_t i = 0; i < wide.size(); ++i)
+    {
+        const double t = static_cast<double>(i) / kSampleRate;
+        wide[i] = static_cast<float>(0.4 * std::sin(2.0 * kPi * 120.0 * t) + 0.4 * std::sin(2.0 * kPi * 12000.0 * t));
+    }
+    const sinefit::ChipFit wideFit = sinefit::FitChannelsByChains(both, wide, kSampleRate, frameRate, 8);
+    double lowHz = 0.0, highHz = 0.0;
+    for (const sinefit::VoiceTrack& track : wideFit.tracks)
+    {
+        const chips::VoiceKind& kind = both->KindOf(track.voice);
+        for (const chips::VoiceFrame& frame : track.frames)
+        {
+            if (!frame.keyOn)
+                continue;
+            const double hz = both->PitchToHz(track.voice, frame.pitch);
+            if (hz < kind.minHz || hz > kind.maxHz)
+            {
+                std::printf("FAIL [chains]: %s voice plays %.0f Hz outside its range\n", kind.name.c_str(), hz);
+                ok = false;
+            }
+            if (std::abs(hz - 120.0) < 20.0)
+                lowHz = hz;
+            if (std::abs(hz - 12000.0) < 200.0)
+                highHz = hz;
+        }
+    }
+    if (lowHz == 0.0 || highHz == 0.0)
+    {
+        std::printf("FAIL [chains]: mixed-kind fit missed a tone (120 Hz=%.1f, 12 kHz=%.1f)\n", lowHz, highHz);
+        ok = false;
+    }
+    std::printf("[chains] mixed kind: 120Hz=%.1f 12kHz=%.1f tracks=%zu similarity=%.3f\n", lowHz, highHz,
+                wideFit.tracks.size(), wideFit.score.similarity);
+    return ok;
+}
+
 // `chip_selftest <dir>` additionally writes one VGM per target -- a 440 Hz
 // + 1500 Hz two-tone fit -- into <dir>, for checking in an external VGM
 // player (e.g. libvgm's vgm2wav).
@@ -762,6 +881,7 @@ int main(int argc, char** argv)
     if (argc > 1)
         DumpVgms(argv[1]);
     bool ok = true;
+    ok &= CheckChainFit();
     ok &= CheckMidi();
     ok &= CheckOpl3Parity();
     ok &= CheckRegisterEncodings();

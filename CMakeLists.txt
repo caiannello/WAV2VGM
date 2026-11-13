@@ -76,3 +76,17 @@ add_executable(chip_selftest
     src/tools/chip_selftest.cpp
 )
 add_test(NAME ChipSelfTest COMMAND chip_selftest)
+
+# Compares the fitting workflows on a real WAV file (see the file header).
+add_executable(fit_bench
+    src/AudioProject.cpp
+    src/Dsp.cpp
+    src/PeakAnalysis.cpp
+    src/OplChip.cpp
+    src/OplPatch.cpp
+    src/OplFit.cpp
+    src/VgmWriter.cpp
+    ${CHIP_SOURCES}
+    src/third_party/dbopl/dbopl.cpp
+    src/tools/fit_bench.cpp
+)
