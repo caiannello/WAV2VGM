@@ -7,11 +7,6 @@ can be exported as a standard VGM file playable on real hardware or any VGM
 player, for any of ten sound chips (the OPL2/3/4, OPM and OPN families,
 HuC6280, Virtual Boy VSU and MultiPCM), or as a General MIDI file.
 
-This is a C++ rewrite of the original python3/pygame experiment which was
-featured on Hackaday, and that version is still available in release v1.0.
-The Python version is way messier, has broken features, and lacks a proper
-UI, but it still might be better for casual hacking. Geek on!
-
 ## Example Output
 
 The input folder has some example input WAV files, and the output folder has
